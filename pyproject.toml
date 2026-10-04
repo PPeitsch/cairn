@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cairn"
+description = "Base local-first para docs de trabajo y handoffs, sincronizada por ssh y accesible por MCP"
+readme = "README.md"
+requires-python = ">=3.11"
+dynamic = ["version"]
+dependencies = []
+
+[project.scripts]
+cairn = "cairn.cli:main"
+
+[tool.hatch.version]
+path = "src/cairn/__init__.py"
