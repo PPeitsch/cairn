@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "cairn"
 description = "Base local-first para docs de trabajo y handoffs, sincronizada por ssh y accesible por MCP"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dynamic = ["version"]
 dependencies = []

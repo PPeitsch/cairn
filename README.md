@@ -35,3 +35,7 @@ Los datos nunca van en este repo: cada nodo tiene los suyos y el sync los iguala
 uv tool install git+<url-del-repo>    # o: pipx install git+<url-del-repo>
 cairn --version
 ```
+
+## Licencia
+
+[MIT](LICENSE).
