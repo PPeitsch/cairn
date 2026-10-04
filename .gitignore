@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+
+# Entornos
+.venv/
+venv/
+env/
+.python-version
+
+# Tests y cobertura
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Linters y tipos
+.mypy_cache/
+.ruff_cache/
+
+# Editores y sistema
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Datos locales de cairn (nunca se versionan: viven en ~/.local/share/cairn)
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
