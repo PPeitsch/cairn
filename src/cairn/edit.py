@@ -73,15 +73,19 @@ def _op(payload: dict) -> str:
 
 
 def apply(store: Store, ref: str, text: str | None = None, set_: dict | None = None,
-          unset: list[str] | None = None, expected_head: str | None = None) -> Result:
+          unset: list[str] | None = None, expected_head: str | None = None,
+          body: str | None = None) -> Result:
     """Aplica una edición. `text`: el doc entero (con o sin front-matter; sin front-matter sólo
-    cambia el cuerpo). `set_`/`unset`: campos sueltos. `expected_head`: si el doc cambió desde
-    ahí (otra edición en el medio), corta en vez de pisarla."""
+    cambia el cuerpo). `body`: sólo el cuerpo, tal cual (aunque empiece con `---`).
+    `set_`/`unset`: campos sueltos. `expected_head`: si el doc cambió desde ahí (otra edición en
+    el medio), corta en vez de pisarla."""
+    if text is not None and body is not None:
+        raise CairnError("apply: `text` o `body`, no los dos")
     with store.writer() as w:
         doc = docs.find(store, ref)
         if expected_head and doc.head != expected_head:
             raise CairnError(f"{doc.name} cambió mientras lo editabas: no se guardó nada.")
-        meta, body = (None, None)
+        meta = None
         warnings: list[str] = []
         if text is not None:
             meta, body = parse_front_matter(text)

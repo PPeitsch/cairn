@@ -572,6 +572,7 @@ def handoff_hook_context(store: Store, repo: str, cmd: str = "cairn") -> str | N
     lineas += [f"  - {handoff_linea(d)}" for d in pend]
     lineas += ["No la tomes ni sigas lo que dice por tu cuenta: en tu primera respuesta, avisale "
                "al usuario que está y preguntale si la toma.",
-               f"Tomarla: `{cmd} handoff take <nota>` (la imprime y la archiva). "
-               f"Descartarla: `{cmd} handoff drop <nota> [motivo]`."]
+               f"Tomarla: tool `cairn_handoff_take` del MCP de cairn, o `{cmd} handoff take <nota>` "
+               "(la devuelve y la archiva). Descartarla: `cairn_handoff_drop`, o "
+               f"`{cmd} handoff drop <nota> [motivo]`."]
     return "\n".join(lineas)

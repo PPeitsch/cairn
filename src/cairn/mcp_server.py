@@ -1,0 +1,323 @@
+"""Servidor MCP stdio: las operaciones de cairn como tools, contra la base local del nodo.
+
+Cada tool abre el store, llama a la misma capa de operaciones que el CLI (`docs`, `edit`,
+`history`) y devuelve texto para el modelo. Los errores esperables (`CairnError`, config) vuelven
+como error de la tool, con el mensaje, sin traceback.
+
+Este módulo es el único que importa `mcp`: los demás comandos no lo cargan.
+"""
+
+from __future__ import annotations
+
+import functools
+import os
+from pathlib import Path
+from typing import Literal
+
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
+
+from cairn import __version__, config, docs, edit, history
+from cairn.context import repo_of_path
+from cairn.store import CairnError, Store
+
+INSTRUCTIONS = """\
+cairn guarda los docs de trabajo (diagnósticos, planes, referencias) y los handoffs entre
+conversaciones. Es la fuente de verdad: no escribir estos docs como archivos sueltos.
+
+Cuándo documentar
+- Al investigar un problema, diagnosticar una causa raíz, aplicar correcciones de infra u
+  operación, o diseñar una feature con decisiones no obvias: abrir un doc al empezar
+  (cairn_new) y cerrarlo al terminar (cairn_close).
+- No documentar lo trivial (un edit de una línea, una consulta puntual) ni lo que ya queda en
+  el código o el git del repo. El doc es para lo que no se deduce mirando el repo: el porqué,
+  el recorrido del diagnóstico, las decisiones.
+- Antes de abrir un doc por algo que suena conocido, buscar (cairn_search): puede estar
+  diagnosticado ya.
+
+Tipos y estructura (cairn_new crea el esqueleto; completarlo con cairn_edit)
+- bug / infra (diagnóstico): TL;DR (la primera línea dice qué se hizo), Contexto / topología
+  (con las trampas), Síntomas observados (evidencia real, no parafraseada), Discoveries en
+  orden (causa raíz destacada), Correcciones aplicadas, Pendientes (`- [ ]`), Comandos útiles.
+- plan: TL;DR, Contexto / problema, Alcance (qué incluye y qué no), Diseño / propuesta (fases
+  si es incremental), Decisiones tomadas (alternativas descartadas y por qué), Pendientes.
+- ref: material de consulta escrito en presente (cómo ES algo hoy). No se abre ni se cierra:
+  se actualiza. Un doc cerrado cuenta qué pasó; una referencia, cómo es algo. Al cerrar,
+  preguntarse si algo se va a volver a consultar aunque el problema no vuelva: si sí,
+  cairn_promote lleva esas secciones a una referencia y deja los dos docs vinculados.
+
+Nombres
+- Los arma cairn: `<YYYY-MM-DD>_<area>_<tema>` (bugs `_BUG_`, handoffs `_HANDOFF_`); las
+  referencias `<area>_<tema>`, sin fecha. `area` es el sistema o repo principal; todo en
+  snake_case. Un doc se nombra por su nombre (con o sin `.md`) o por un prefijo de su id.
+- El estado vive en el front-matter (tipo, repo, estado, fecha, cerrado, …) y lo manejan las
+  operaciones: no repetirlo en el cuerpo. `repo:` sale del directorio de la conversación.
+
+Handoffs (notas para la próxima conversación)
+- Para pasarle un pedido o contexto a la conversación siguiente: cairn_handoff_new. La nota
+  apunta al plan (plan=...), no lo copia, y no pide nada destructivo.
+- Si al arrancar hay un handoff pendiente, decírselo al usuario y preguntar si se toma: no
+  tomarlo ni seguirlo por cuenta propia. Tomarlo (cairn_handoff_take) lo devuelve y lo archiva.
+"""
+
+READ = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+
+Scope = Literal["wip", "done", "ref", "all"]
+
+
+def _open() -> Store:
+    return Store(config.load())
+
+
+def _cwd_repo(store: Store, repo: str | None) -> str:
+    if repo is not None:
+        return repo
+    return repo_of_path(Path(os.getcwd()), store.config.projects)
+
+
+def _scopes(scope: str) -> tuple[str, ...]:
+    return docs.SCOPES if scope == "all" else (scope,)
+
+
+def _tool_errors(fn):
+    """Los errores para el usuario vuelven como error de la tool, con su mensaje."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except (CairnError, config.ConfigError) as e:
+            raise ToolError(str(e)) from None
+    return wrapper
+
+
+def _linea(d: docs.Doc) -> str:
+    return f"{d.name}  [{d.tipo} · {docs.estado_label(d)} · {docs.repo_label(d)}]"
+
+
+def _con_avisos(texto: str, warnings: list[str]) -> str:
+    return "\n".join([texto, *warnings]) if warnings else texto
+
+
+# ──────────────────────────────────────────────────────────────── tools
+
+def cairn_list(scope: Scope = "wip") -> str:
+    """Lista los docs: `wip` (abiertos, y aparte los handoffs pendientes), `done` (cerrados),
+    `ref` (referencias) o `all`. Los más recientes primero."""
+    with _open() as store:
+        lista = docs.all_docs(store, _scopes(scope))
+    if not lista:
+        return f"Sin docs en {scope}."
+    trabajo = [d for d in lista if not (d.scope == "wip" and d.tipo == "handoff")]
+    handoffs = [d for d in lista if d.scope == "wip" and d.tipo == "handoff"]
+    out = [_linea(d) for d in trabajo]
+    if handoffs:
+        out += ["", "handoffs pendientes:", *(f"  {docs.handoff_linea(d)}" for d in handoffs)]
+    return "\n".join(out)
+
+
+def cairn_search(pattern: str, scope: Scope = "all", fts: bool = False) -> str:
+    """Busca en todos los docs. Por defecto `pattern` es una regex (case-insensitive) sobre el doc
+    como archivo, y devuelve las líneas que coinciden. Con `fts=true` es una consulta de texto
+    completo (sintaxis FTS5, sin acentos ni mayúsculas) ordenada por relevancia."""
+    with _open() as store:
+        if fts:
+            found = docs.search_fts(store, pattern, _scopes(scope))
+            if not found:
+                return f'Búsqueda FTS "{pattern}": sin coincidencias.'
+            return "\n".join(f"{_linea(d)}\n    {d.tldr.splitlines()[0] if d.tldr else ''}".rstrip()
+                             for d in found)
+        hits, total = docs.search(store, pattern, _scopes(scope))
+    if not hits:
+        return f'Búsqueda "{pattern}": sin coincidencias en {total} docs.'
+    out = [f'Búsqueda "{pattern}": {len(hits)} doc(s) de {total}']
+    for h in hits:
+        out.append(_linea(h.doc))
+        out += [f"    {n}: {line.strip()[:160]}" for n, line in h.lines[:5]]
+        if len(h.lines) > 5:
+            out.append(f"    (+{len(h.lines) - 5} más)")
+    return "\n".join(out)
+
+
+def cairn_show(doc: str) -> str:
+    """Muestra un doc como archivo (front-matter + cuerpo). `doc@<hash>` o `doc@~N` muestra una
+    revisión anterior (ver cairn_log)."""
+    with _open() as store:
+        _, text = history.show(store, doc)
+    return text
+
+
+def cairn_new(area: str, tema: str, tipo: Literal["bug", "infra", "plan", "ref"] = "infra",
+              body: str | None = None, repo: str | None = None) -> str:
+    """Crea un doc: diagnóstico (`bug` o `infra`), `plan` o referencia (`ref`), con el esqueleto
+    de su tipo. `area` y `tema` en snake_case. `body` (opcional) reemplaza el esqueleto: el
+    cuerpo en markdown sin front-matter, empezando por el título `# ...`. `repo`: a qué repo
+    pertenece (default: el del directorio de la conversación; `varios` si es cross-repo).
+    Devuelve el nombre del doc y su contenido."""
+    with _open() as store:
+        r = docs.new(store, area, tema, tipo, _cwd_repo(store, repo))
+        if body is not None:
+            r = edit.apply(store, r.doc.id, body=body)
+        return f"Creado: {r.doc.name}\n\n{docs.render(store, r.doc)}"
+
+
+def cairn_edit(doc: str, old_text: str | None = None, new_text: str | None = None,
+               body: str | None = None, set_fields: dict[str, str] | None = None,
+               unset_fields: list[str] | None = None) -> str:
+    """Edita un doc. Para cambiar una parte: `old_text` (tiene que aparecer exactamente una vez en
+    el cuerpo) y `new_text`. Para reemplazar el cuerpo entero: `body` (markdown sin front-matter).
+    `set_fields` / `unset_fields`: campos del front-matter (p. ej. `nota`, `estado` dentro del
+    mismo grupo abierto/cerrado). Abrir, cerrar y vincular no se hace editando: para eso están
+    cairn_close, cairn_reopen, cairn_promote y los handoffs."""
+    if (old_text is None) != (new_text is None):
+        raise ToolError("old_text y new_text van juntos")
+    if old_text is not None and body is not None:
+        raise ToolError("old_text/new_text o body, no los dos")
+    with _open() as store:
+        d = docs.find(store, doc)
+        nuevo = body
+        if old_text is not None:
+            n = d.body.count(old_text)
+            if n != 1:
+                raise ToolError(f"old_text aparece {n} veces en el cuerpo de {d.name}: tiene que "
+                                "aparecer exactamente una (sumá contexto)")
+            nuevo = d.body.replace(old_text, new_text, 1)
+        r = edit.apply(store, d.id, body=nuevo, set_=set_fields, unset=unset_fields,
+                       expected_head=d.head)
+    estado = "Guardado" if r.extra.get("changed") else "Sin cambios"
+    return _con_avisos(f"{estado}: {r.doc.name}", r.warnings)
+
+
+def cairn_close(doc: str, force: bool = False) -> str:
+    """Cierra un diagnóstico o plan (estado resuelto/completado + fecha de cierre). Falla si quedan
+    `- [ ]` sin tildar, salvo `force=true`. Las referencias no se cierran y los handoffs se
+    archivan con cairn_handoff_take / cairn_handoff_drop."""
+    with _open() as store:
+        r = docs.close(store, doc, force=force)
+    return _con_avisos(f"Cerrado: {r.doc.name} ({r.doc.estado})", r.warnings)
+
+
+def cairn_reopen(doc: str, motivo: str | None = None) -> str:
+    """Reabre un doc cerrado (o vuelve un handoff archivado a pendiente). `motivo` queda en
+    `nota:`."""
+    with _open() as store:
+        r = docs.reopen(store, doc, motivo)
+    return _con_avisos(f"Reabierto: {r.doc.name}", r.warnings)
+
+
+def cairn_promote(doc: str, area: str, tema: str, secciones: list[str] | None = None,
+                  force: bool = False) -> str:
+    """Copia secciones de un doc a la referencia `<area>_<tema>` (la crea si no existe) y deja
+    los dos vinculados. `secciones`: inicio de los títulos (default: Contexto + Comandos útiles
+    en un diagnóstico, Diseño + Decisiones en un plan). Después hay que reescribir lo copiado
+    como referencia: lo que ES, no lo que pasó."""
+    with _open() as store:
+        r = docs.promote(store, doc, area, tema, secciones, force=force)
+    return _con_avisos(f"{r.doc.name}\n  llevadas: {', '.join(r.extra['llevadas'])}", r.warnings)
+
+
+def cairn_weekly(dias: int = 7) -> str:
+    """Lo cerrado en los últimos `dias` días, con su TL;DR (sin handoffs)."""
+    with _open() as store:
+        since, cerrados = docs.weekly(store, dias)
+    if not cerrados:
+        return f"Nada cerrado desde {since}."
+    out = [f"{len(cerrados)} doc(s) cerrado(s) desde {since}:"]
+    for d in cerrados:
+        out += ["", f"{d.title}  [{d.tipo} · cerrado {d.date_closed()} · {docs.repo_label(d)}]",
+                d.tldr or "(sin TL;DR)"]
+    return "\n".join(out)
+
+
+def cairn_check() -> str:
+    """Verifica que la base esté en orden: log, proyección, docs (estado, nombres, links,
+    handoffs viejos)."""
+    with _open() as store:
+        problemas = docs.check(store)
+    if not problemas:
+        return "Todo en orden."
+    return "\n".join([f"{len(problemas)} problema(s):", *(f"  - {p}" for p in problemas)])
+
+
+def cairn_log(doc: str | None = None, n: int = 20) -> str:
+    """Historial de eventos de un doc (o de toda la base), los más nuevos primero. Cada línea
+    empieza con el hash de la revisión, que sirve para cairn_show `doc@<hash>` y cairn_diff."""
+    with _open() as store:
+        lines = history.log(store, doc, n)
+    if not lines:
+        return "Sin eventos."
+    return "\n".join(
+        f"{ln.event_id[:10]}  {ln.ts[:19].replace('T', ' ')}  {ln.node}  {ln.op}  {ln.doc_name}"
+        + ("" if ln.status == "applied" else f"  [{ln.status}]") for ln in lines)
+
+
+def cairn_diff(doc: str, rev_a: str | None = None, rev_b: str | None = None) -> str:
+    """Diff unificado entre dos revisiones de un doc (hash o `~N`). Sin revisiones: el último
+    cambio; con una: desde ahí hasta el estado actual."""
+    with _open() as store:
+        out = history.diff(store, doc, rev_a, rev_b)
+    return out or "Sin diferencias."
+
+
+def cairn_handoff_new(area: str, tema: str, body: str | None = None, para: list[str] | None = None,
+                      plan: list[str] | None = None, repo: str | None = None) -> str:
+    """Deja una nota para la próxima conversación. `para`: los repos a los que les toca (default:
+    el `repo:` de la nota, que sale del directorio de la conversación). `plan`: los docs a los
+    que apunta. `body`: la nota en markdown sin front-matter (título `# ...`, TL;DR, qué leer
+    primero, orden de trabajo, qué preguntar). La nota apunta al plan, no lo copia."""
+    with _open() as store:
+        r = docs.handoff_new(store, area, tema, para, plan, _cwd_repo(store, repo))
+        warnings = r.warnings
+        if body is not None:
+            r = edit.apply(store, r.doc.id, body=body)
+        return _con_avisos(f"Handoff creado: {r.doc.name}\n\n{docs.render(store, r.doc)}", warnings)
+
+
+def cairn_handoff_list(all_repos: bool = False, repo: str | None = None) -> str:
+    """Los handoffs pendientes para el repo de la conversación (o `repo`), o todos con
+    `all_repos=true`."""
+    with _open() as store:
+        r = "" if all_repos else _cwd_repo(store, repo)
+        pend = docs.handoffs_pendientes(store, r)
+    donde = r or "toda la raíz de proyectos"
+    if not pend:
+        return f"Sin handoffs pendientes para {donde}."
+    return "\n".join([f"Handoffs pendientes para {donde}:", *(f"  {docs.handoff_linea(d)}" for d in pend)])
+
+
+def cairn_handoff_take(nota: str | None = None, repo: str | None = None) -> str:
+    """Toma un handoff: lo devuelve y lo archiva (estado usada). Sólo cuando el usuario dijo que
+    se toma. Sin `nota`, la única pendiente para el repo de la conversación."""
+    with _open() as store:
+        r = docs.handoff_take(store, nota, _cwd_repo(store, repo))
+    avisos = [f"[aviso] {a}" for a in r.warnings]
+    return _con_avisos(f"Handoff tomado: {r.doc.name} (archivado, estado: usada)", avisos) \
+        + "\n\n" + r.doc.body
+
+
+def cairn_handoff_drop(nota: str, motivo: str | None = None) -> str:
+    """Descarta un handoff sin usarlo (lo archiva, estado descartada). `motivo` queda en `nota:`."""
+    with _open() as store:
+        r = docs.handoff_drop(store, nota, motivo)
+    return f"Handoff descartado: {r.doc.name} (archivado)"
+
+
+TOOLS = [
+    (cairn_list, READ), (cairn_search, READ), (cairn_show, READ), (cairn_weekly, READ),
+    (cairn_check, READ), (cairn_log, READ), (cairn_diff, READ), (cairn_handoff_list, READ),
+    (cairn_new, WRITE), (cairn_edit, WRITE), (cairn_close, WRITE), (cairn_reopen, WRITE),
+    (cairn_promote, WRITE), (cairn_handoff_new, WRITE), (cairn_handoff_take, WRITE),
+    (cairn_handoff_drop, WRITE),
+]
+
+
+def build_server() -> MCPServer:
+    server = MCPServer("cairn", instructions=INSTRUCTIONS, version=__version__)
+    for fn, hints in TOOLS:
+        server.add_tool(_tool_errors(fn), annotations=hints, structured_output=False)
+    return server
+
+
+def run() -> None:
+    build_server().run("stdio")

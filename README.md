@@ -4,8 +4,8 @@ Base local-first para los docs de trabajo (diagnósticos, planes, referencias) y
 conversaciones. Cada lugar donde se trabaja es un **nodo** con su propia base; los nodos se
 sincronizan por ssh, al estilo git, y los agentes acceden por MCP stdio.
 
-> Estado: en construcción. Fase 1 (núcleo local: log, proyección, CLI e importador) lista;
-> faltan el MCP (fase 2) y el sync por ssh (fase 3).
+> Estado: en construcción. Fase 1 (núcleo local: log, proyección, CLI e importador) y fase 2
+> (MCP stdio e integración con Claude Code) listas; falta el sync por ssh (fase 3).
 
 ## Cómo funciona
 
@@ -63,6 +63,23 @@ cairn diff <doc> [rev_a] [rev_b]            # default: el último cambio
 cairn export <destino> [scope] [--force]    # los docs como árbol _wip/_done/_ref
 cairn rebuild                               # rehace la base SQLite desde el log
 ```
+
+### Agentes (MCP)
+
+```bash
+cairn integrate claude-code [--dry-run]     # registra el MCP (scope user) y el hook SessionStart
+cairn integrate claude-code --remove        # lo deshace
+cairn integrate claude-code --command "ssh vps cairn"   # usar la base de otro nodo por ssh
+```
+
+`integrate` registra el MCP con `claude mcp add --scope user` y agrega a `settings.json` sólo las
+entradas de cairn (no toca los demás hooks). Es idempotente y respeta `CLAUDE_CONFIG_DIR`.
+
+`cairn mcp` es el servidor stdio que lanza el agente: expone el ciclo de vida de los docs
+(`cairn_new`, `cairn_edit`, `cairn_close`, `cairn_reopen`, `cairn_promote`), las consultas
+(`cairn_list`, `cairn_search`, `cairn_show`, `cairn_weekly`, `cairn_check`, `cairn_log`,
+`cairn_diff`) y los handoffs (`cairn_handoff_new|list|take|drop`). Sus instrucciones llevan las
+convenciones de cuándo y cómo documentar.
 
 Un doc se nombra por su nombre (`2026-10-04_cairn_arquitectura`, con o sin `.md`) o por un
 prefijo de su id. No hay carpetas: si un doc está abierto, cerrado o es referencia lo dicen su
