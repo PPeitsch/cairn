@@ -24,7 +24,7 @@ CREATE_OPS = frozenset({"create", "import", "handoff_new"})
 # qué se hizo y es lo que muestran `log` y `weekly`.
 CHANGE_OPS = frozenset({
     "edit", "set_state", "close", "reopen", "promote", "link", "unlink",
-    "handoff_take", "handoff_drop",
+    "handoff_take", "handoff_drop", "resolve",
 })
 OPS = CREATE_OPS | CHANGE_OPS
 

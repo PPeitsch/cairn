@@ -9,6 +9,7 @@ segmentos enteros y comparar tamaños para saber qué falta.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,3 +121,41 @@ class EventLog:
         """Tamaño de cada segmento: lo que hay en disco, para comparar con lo ya proyectado."""
         return {(n, s): self.segment_path(n, s).stat().st_size
                 for n in self.nodes() for s in self.segments(n)}
+
+    # -- sync: los segmentos como bytes
+    def read_bytes(self, node: str, segment: str) -> bytes:
+        try:
+            return self.segment_path(node, segment).read_bytes()
+        except FileNotFoundError:
+            return b""
+
+    def inventory(self) -> dict[str, dict[str, list]]:
+        """`{nodo: {segmento: [tamaño, sha256]}}` de lo que hay en disco hasta el último `\\n`
+        (una línea a medio escribir no cuenta)."""
+        out: dict[str, dict[str, list]] = {}
+        for n in self.nodes():
+            for seg in self.segments(n):
+                data = self.read_bytes(n, seg)
+                data = data[:data.rfind(b"\n") + 1]
+                out.setdefault(n, {})[seg] = [len(data), hashlib.sha256(data).hexdigest()]
+        return out
+
+    def append_raw(self, node: str, segment: str, offset: int, data: bytes) -> None:
+        """Agrega bytes que llegaron por sync al segmento de otro nodo. Sólo si lo local es
+        exactamente lo que el otro lado creía (`offset`): si no, no se toca nada."""
+        if node == self.node:
+            raise EventError(f"el log de {node} sólo lo escribe {node}")
+        if not NODE_RE.match(node) or not (segment.isdigit() and len(segment) == 6):
+            raise EventError(f"segmento inválido: {node}/{segment}")
+        if not data.endswith(b"\n"):
+            raise EventError("un bloque tiene que terminar en una línea completa")
+        path = self.segment_path(node, segment)
+        size = path.stat().st_size if path.exists() else 0
+        if size != offset:
+            raise EventError(f"{node}/{segment}: se esperaba continuar desde el byte {offset} y "
+                             f"el log local tiene {size}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "ab") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())

@@ -4,8 +4,9 @@ Base local-first para los docs de trabajo (diagnósticos, planes, referencias) y
 conversaciones. Cada lugar donde se trabaja es un **nodo** con su propia base; los nodos se
 sincronizan por ssh, al estilo git, y los agentes acceden por MCP stdio.
 
-> Estado: en construcción. Fase 1 (núcleo local: log, proyección, CLI e importador) y fase 2
-> (MCP stdio e integración con Claude Code) listas; falta el sync por ssh (fase 3).
+> Estado: en construcción. Fases 1 (núcleo local: log, proyección, CLI e importador), 2 (MCP
+> stdio e integración con Claude Code) y 3 (sync por ssh con eventos firmados) listas. Falta
+> migrar desde wip-doc y, si hace falta, un transporte HTTPS para nodos cloud sin ssh saliente.
 
 ## Cómo funciona
 
@@ -26,7 +27,7 @@ sincronizan por ssh, al estilo git, y los agentes acceden por MCP stdio.
 | Qué | Dónde |
 |---|---|
 | Configuración | `~/.config/cairn/config.toml` |
-| Datos (logs, base, clave del nodo) | `~/.local/share/cairn/` |
+| Datos (logs, base, clave del nodo `node_key`) | `~/.local/share/cairn/` |
 
 Los datos nunca van en este repo: cada nodo tiene los suyos y el sync los iguala.
 
@@ -62,7 +63,43 @@ cairn log [<doc>] [-n N]
 cairn diff <doc> [rev_a] [rev_b]            # default: el último cambio
 cairn export <destino> [scope] [--force]    # los docs como árbol _wip/_done/_ref
 cairn rebuild                               # rehace la base SQLite desde el log
+cairn resolve <doc> [--keep main|<hash>]    # ramas divergentes: verlas y elegir cuál queda
 ```
+
+### Sync entre nodos
+
+Cada nodo tiene una clave ed25519 (`<datos>/node_key`, formato OpenSSH) que se genera sola:
+firma cada evento que escribe y es también su clave ssh para sincronizar. Un evento sin firma
+válida de un nodo autorizado no entra a la base, llegue como llegue.
+
+Sumar un nodo (p. ej. la laptop contra el VPS, con un usuario dedicado `cairn` en el VPS):
+
+```bash
+laptop$ cairn key                                   # copiar la línea
+vps$    cairn authorize laptop "ssh-ed25519 AAAA… cairn:laptop"
+vps$    cairn key                                   # copiar la línea
+laptop$ cairn authorize vps "ssh-ed25519 AAAA… cairn:vps" --no-ssh
+laptop$ cairn remote add vps ssh://cairn@vps.example
+laptop$ cairn sync
+```
+
+`authorize` deja en `~/.ssh/authorized_keys` del VPS una entrada restringida a un único comando
+(`command="cairn sync-peer --stdio --as laptop",restrict`): esa clave no da shell ni forwarding,
+y no puede hacerse pasar por otro nodo. `--no-ssh` sólo confía en los eventos del nodo (para uno
+que no se conecta a este, cuyos eventos llegan a través de otro). Cada nodo tiene que autorizar
+a todos los demás, así un nodo comprometido no puede inyectar eventos a nombre de otro.
+
+```bash
+cairn sync [remoto]... [--quiet] [--timeout S] [--background]
+cairn remote add|remove|list
+cairn peers                                 # los autorizados, con o sin ssh, revocados
+cairn revoke <nodo>                         # saca el acceso y rechaza sus eventos nuevos
+```
+
+Con remotos configurados, el sync corre solo: el hook de handoffs trae lo nuevo antes de
+avisar, al cerrar la sesión se empuja en segundo plano, y lo mismo después de crear o cerrar un
+doc y de crear o tomar un handoff (salida en `<datos>/sync.log`). `[sync] auto = "false"` en la
+config lo apaga.
 
 ### Agentes (MCP)
 
@@ -93,7 +130,9 @@ uvx ruff check src tests
 ```
 
 Los tests corren contra un nodo aislado en un temporal: `CAIRN_CONFIG_DIR`, `CAIRN_DATA_DIR` y
-`CAIRN_PROJECTS` cambian las rutas, y `CAIRN_NOW` fija el reloj.
+`CAIRN_PROJECTS` cambian las rutas, y `CAIRN_NOW` fija el reloj. Para el sync,
+`CAIRN_AUTHORIZED_KEYS` cambia el `authorized_keys`, `CAIRN_SSH` el comando ssh (como `GIT_SSH`)
+y `CAIRN_NO_AUTOSYNC` apaga los disparadores.
 
 ## Licencia
 

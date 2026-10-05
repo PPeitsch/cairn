@@ -392,13 +392,15 @@ def weekly(store: Store, dias: int = 7) -> tuple[str, list[Doc]]:
 # ──────────────────────────────────────────────────────────────── check
 
 def check(store: Store) -> list[str]:
-    """Lo que no está en orden: el log (líneas corruptas, eventos sin proyectar, ramas
-    divergentes) y los docs (estado incoherente, nombres, links rotos, handoffs viejos)."""
+    """Lo que no está en orden: el log (líneas corruptas, firmas inválidas, eventos sin
+    proyectar, ramas divergentes) y los docs (estado incoherente, nombres, links rotos, handoffs viejos)."""
     problemas: list[str] = []
     en_log = 0
+    problemas += store.verifier.bad_peers
     for entry in store.log.read_all():
-        if entry.event is None:
-            problemas.append(f"logs/{entry.node}/{entry.segment}.jsonl byte {entry.offset}: {entry.error}")
+        why = entry.error if entry.event is None else store.verifier.problem(entry.event)
+        if why:
+            problemas.append(f"logs/{entry.node}/{entry.segment}.jsonl byte {entry.offset}: {why}")
         else:
             en_log += 1
     proyectados = store.projection.count_events()
@@ -406,7 +408,8 @@ def check(store: Store) -> list[str]:
         problemas.append(f"la proyección tiene {proyectados} evento(s) y el log {en_log} — "
                          "correr `cairn rebuild`")
     db = store.projection.db
-    for r in db.execute("SELECT status, count(*) n FROM events WHERE status != 'applied' GROUP BY status"):
+    for r in db.execute("SELECT status, count(*) n FROM events WHERE status NOT IN ('applied', 'resolved') "
+                      "GROUP BY status"):
         que = {"divergent": "en ramas divergentes (dos nodos escribieron sobre el mismo head)",
                "orphan": "huérfanos (falta el evento anterior: sincronizar)"}.get(r["status"], r["status"])
         problemas.append(f"{r['n']} evento(s) {que}")
@@ -416,7 +419,7 @@ def check(store: Store) -> list[str]:
     for doc in all_docs(store):
         n = doc.name
         if doc.divergent:
-            problemas.append(f"{n} tiene ramas divergentes: `cairn log {n}` para verlas")
+            problemas.append(f"{n} tiene ramas divergentes: `cairn resolve {n}` para verlas y elegir")
         if doc.meta.get("tipo") not in TIPOS_DOC:
             problemas.append(f"{n} tiene tipo '{doc.meta.get('tipo', '')}' (válidos: {', '.join(TIPOS_DOC)})")
         if doc.scope != "ref":

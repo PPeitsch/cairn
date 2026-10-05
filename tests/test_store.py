@@ -1,5 +1,6 @@
 import json
 
+from cairn import config
 from cairn.eventlog import EventLog
 from cairn.events import Event
 from cairn.store import Store, new_doc_id
@@ -85,24 +86,51 @@ def test_projection_is_rebuilt_from_scratch(cfg):
         assert len(s.projection.doc_ids()) == 1
 
 
-def test_catch_up_picks_events_from_other_nodes(store, cfg):
+def test_catch_up_picks_events_from_other_nodes(cfg, peer):
+    vps = peer("vps")
+    store = Store(config.load())
     doc = create(store)
     head = store.projection.head(doc)
     # un evento escrito por otro nodo (como lo dejaría el sync)
-    other = Event.new(node="vps", ts="2026-03-11T00:00:00.000000+00:00", op="edit", doc_id=doc,
-                      payload={"body": "desde el vps"}, prev=head)
+    other = vps.sign(Event.new(node="vps", ts="2026-03-11T00:00:00.000000+00:00", op="edit", doc_id=doc,
+                               payload={"body": "desde el vps"}, prev=head))
     EventLog(cfg.logs_dir, "vps").append([other])
     assert store.catch_up() == 1
     assert store.state(doc).body == "desde el vps"
+    store.close()
 
 
-def test_divergence_keeps_both_branches(store, cfg):
+def test_events_without_valid_signature_are_not_projected(cfg, peer):
+    vps = peer("vps")
+    store = Store(config.load())
+    doc = create(store)
+    head = store.projection.head(doc)
+    unsigned = Event.new(node="vps", ts="2026-03-11T00:00:00.000000+00:00", op="edit", doc_id=doc,
+                         payload={"body": "sin firma"}, prev=head)
+    intruso = Event.new(node="intruso", ts="2026-03-11T00:00:01.000000+00:00", op="edit", doc_id=doc,
+                        payload={"body": "intruso"}, prev=head)
+    forged = Event(**{**unsigned.__dict__, "sig": vps.sign(intruso).sig})
+    EventLog(cfg.logs_dir, "vps").append([unsigned, forged])
+    EventLog(cfg.logs_dir, "intruso").append([vps.sign(intruso)])
+    assert store.catch_up() == 0
+    assert store.state(doc).body == "# x — tema\n"
+    assert len(store.problems) == 3
+    assert any("no autorizado (intruso)" in p for p in store.problems)
+    assert sum("firma inválida" in p for p in store.problems) == 2
+    from cairn import docs
+    assert len([p for p in docs.check(store) if "firma" in p or "autorizado" in p]) == 3
+    store.close()
+
+
+def test_divergence_keeps_both_branches(cfg, peer):
+    vps = peer("vps")
+    store = Store(config.load())
     doc = create(store)
     head = store.projection.head(doc)
     with store.writer() as w:
         mine = w.emit("edit", doc, {"body": "laptop"})
-    theirs = Event.new(node="vps", ts="2026-03-11T00:00:00.000000+00:00", op="edit", doc_id=doc,
-                       payload={"body": "vps"}, prev=head)
+    theirs = vps.sign(Event.new(node="vps", ts="2026-03-11T00:00:00.000000+00:00", op="edit",
+                                doc_id=doc, payload={"body": "vps"}, prev=head))
     EventLog(cfg.logs_dir, "vps").append([theirs])
     store.catch_up()
     row = store.projection.db.execute("SELECT divergent, body FROM docs WHERE id = ?", (doc,)).fetchone()
@@ -113,15 +141,18 @@ def test_divergence_keeps_both_branches(store, cfg):
     before = snapshot(store)
     store.rebuild()                       # el resultado no depende del orden de llegada
     assert snapshot(store) == before
+    store.close()
 
 
-def test_orphan_until_its_parent_arrives(store, cfg):
+def test_orphan_until_its_parent_arrives(cfg, peer):
+    vps = peer("vps")
+    store = Store(config.load())
     doc = create(store)
     head = store.projection.head(doc)
-    first = Event.new(node="vps", ts="2026-03-11T00:00:00.000000+00:00", op="edit", doc_id=doc,
-                      payload={"body": "1"}, prev=head)
-    second = Event.new(node="vps", ts="2026-03-11T00:00:01.000000+00:00", op="edit", doc_id=doc,
-                       payload={"body": "2"}, prev=first.id)
+    first = vps.sign(Event.new(node="vps", ts="2026-03-11T00:00:00.000000+00:00", op="edit", doc_id=doc,
+                               payload={"body": "1"}, prev=head))
+    second = vps.sign(Event.new(node="vps", ts="2026-03-11T00:00:01.000000+00:00", op="edit", doc_id=doc,
+                                payload={"body": "2"}, prev=first.id))
     store.projection.ingest([second])
     store.projection.reproject(doc)
     status = dict(store.projection.db.execute("SELECT id, status FROM events").fetchall())
@@ -129,6 +160,7 @@ def test_orphan_until_its_parent_arrives(store, cfg):
     EventLog(cfg.logs_dir, "vps").append([first, second])
     store.catch_up()
     assert store.state(doc).body == "2"
+    store.close()
 
 
 def test_corrupt_line_is_reported_and_skipped(store, cfg):

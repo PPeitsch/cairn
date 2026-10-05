@@ -11,6 +11,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dynamic = ["version"]
 dependencies = [
+    "cryptography>=42",
     "mcp>=2.3,<3",
 ]
 
