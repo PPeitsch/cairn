@@ -351,6 +351,15 @@ def cmd_export(args) -> int:
     return 0
 
 
+# ──────────────────────────────────────────────────────────────── mcp
+
+def cmd_mcp(args) -> int:
+    config.load()       # sin `init`, avisar acá y no al primer llamado de una tool
+    from cairn import mcp_server  # sólo este comando carga `mcp`
+    mcp_server.run()
+    return 0
+
+
 # ──────────────────────────────────────────────────────────────── parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -447,6 +456,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("rebuild", help="rehace la proyección SQLite desde el log de eventos")
     p.set_defaults(func=cmd_rebuild)
+
+    p = sub.add_parser("mcp", help="servidor MCP por stdio (lo lanza el agente, no se corre a mano)")
+    p.set_defaults(func=cmd_mcp)
 
     h = sub.add_parser("handoff", help="notas para la próxima conversación")
     hs = h.add_subparsers(dest="handoff_cmd", metavar="<new|take|drop|list|hook>", required=True)
