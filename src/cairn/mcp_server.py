@@ -46,6 +46,14 @@ Tipos y estructura (cairn_new crea el esqueleto; completarlo con cairn_edit)
   se actualiza. Un doc cerrado cuenta qué pasó; una referencia, cómo es algo. Al cerrar,
   preguntarse si algo se va a volver a consultar aunque el problema no vuelva: si sí,
   cairn_promote lleva esas secciones a una referencia y deja los dos docs vinculados.
+  Si una referencia es un relevamiento con hallazgos (un review), marcar el estado de cada uno
+  (OK / parcial / pendiente) y, al re-verificarlo, contra qué commit o versión.
+
+Archivos que no son docs
+- Scripts de validación o debug, reportes autogenerados y CSV no van a cairn: son archivos en
+  `<proyectos>/_wip/scripts/` y `<proyectos>/_wip/validations/` (o los de `_done/` y `_ref/`),
+  nombrados con el área adelante (`pkynetics_changelog_borrador.md`). cairn_search también
+  busca en los `.md` de esas carpetas y cairn_check avisa si algo quedó fuera de lugar.
 
 Nombres
 - Los arma cairn: `<YYYY-MM-DD>_<area>_<tema>` (bugs `_BUG_`, handoffs `_HANDOFF_`); las
