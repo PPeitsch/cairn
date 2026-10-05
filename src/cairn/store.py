@@ -171,6 +171,14 @@ class Store:
                 self.log.append(w.events)
                 self.catch_up()
 
+    @contextmanager
+    def receiving(self):
+        """Para el sync: bajo el lock se agregan al log los bloques que llegaron de otros nodos;
+        al salir se proyectan."""
+        with self._lock():
+            yield self.log
+            self.catch_up()
+
     # -- lectura
     def state(self, doc_id: str) -> DocState | None:
         return self.projection.state(doc_id)

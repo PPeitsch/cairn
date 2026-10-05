@@ -9,10 +9,12 @@ import shlex
 import sys
 from pathlib import Path
 
-from cairn import __version__, clock, config, docs, edit, history, integrate, transfer
+from cairn import __version__, access, clock, config, docs, edit, history, integrate, sync, transfer
 from cairn.context import repo_of_path
 from cairn.markdown import first_sentences, fmt_date
 from cairn.store import CairnError, Store
+
+SYNC_HOOK_TIMEOUT = 15
 
 
 def _open() -> Store:
@@ -72,6 +74,7 @@ def cmd_new(args) -> int:
     with _open() as store:
         repo = args.repo if args.repo is not None else _cwd_repo(store)
         r = docs.new(store, args.area, args.tema, args.tipo, repo)
+    sync.trigger(store.config)
     print(r.doc.name)
     return 0
 
@@ -79,6 +82,7 @@ def cmd_new(args) -> int:
 def cmd_close(args) -> int:
     with _open() as store:
         r = docs.close(store, args.doc, force=args.force)
+    sync.trigger(store.config)
     print(f"Cerrado: {r.doc.name} ({r.doc.estado})")
     _warn_all(r.warnings)
     return 0
@@ -221,6 +225,7 @@ def cmd_handoff_new(args) -> int:
     with _open() as store:
         repo = args.repo if args.repo is not None else _cwd_repo(store)
         r = docs.handoff_new(store, args.area, args.tema, args.para, args.plan, repo)
+    sync.trigger(store.config)
     print(r.doc.name)
     _warn_all(r.warnings)
     return 0
@@ -229,6 +234,7 @@ def cmd_handoff_new(args) -> int:
 def cmd_handoff_take(args) -> int:
     with _open() as store:
         r = docs.handoff_take(store, args.nota, _cwd_repo(store))
+    sync.trigger(store.config)
     print(f"Handoff tomado: {r.doc.name} (archivado, estado: usada)")
     for a in r.warnings:
         print(f"[aviso] {a}")
@@ -269,6 +275,9 @@ def cmd_handoff_hook(args) -> int:
         if data.get("source") in ("resume", "compact"):
             return 0
         with _open() as store:
+            if sync.auto_enabled(store.config):
+                # traer lo que dejó otra máquina antes de mirar (callado: si falla, sigue local)
+                sync.sync_all(store, timeout=SYNC_HOOK_TIMEOUT)
             repo = repo_of_path(Path(data.get("cwd") or os.getcwd()), store.config.projects)
             texto = docs.handoff_hook_context(store, repo)
         if texto:
@@ -375,6 +384,82 @@ def cmd_integrate(args) -> int:
     if not rep.actions:
         print("Nada que hacer." if args.remove else "Integración al día.")
     return 0
+
+
+# ──────────────────────────────────────────────────────────────── sync y acceso
+
+def cmd_key(args) -> int:
+    with _open() as store:
+        print(store.public_line())
+    return 0
+
+
+def cmd_authorize(args) -> int:
+    pub = args.clave
+    if Path(pub).expanduser().is_file():
+        pub = Path(pub).expanduser().read_text(encoding="utf-8").strip()
+    command = shlex.split(args.command) if args.command else None
+    for line in access.authorize(args.nodo, pub, ssh=not args.no_ssh, command=command):
+        print(line)
+    return 0
+
+
+def cmd_revoke(args) -> int:
+    for line in access.revoke(args.nodo):
+        print(line)
+    return 0
+
+
+def cmd_peers(args) -> int:
+    cfg = config.load()
+    con_ssh = set(access.ssh_authorized_nodes())
+    if not cfg.peers:
+        print("Sin nodos autorizados.")
+    for p in cfg.peers.values():
+        estado = f"revocado {p.revoked}" if p.revoked else ("ssh" if p.node in con_ssh else "sólo eventos")
+        print(f"{p.node:<16} {estado:<18} {p.key[:40]}…")
+    return 0
+
+
+def cmd_remote(args) -> int:
+    if args.remote_cmd == "add":
+        access.remote_add(args.nombre, args.url, key=args.key, command=args.command)
+        print(f"Remoto {args.nombre}: {args.url}")
+    elif args.remote_cmd == "remove":
+        access.remote_remove(args.nombre)
+        print(f"Remoto {args.nombre} sacado")
+    else:
+        cfg = config.load()
+        if not cfg.remotes:
+            print("Sin remotos.")
+        for r in cfg.remotes.values():
+            print(f"{r.name:<12} {r.url}" + (f"  (clave {r.key})" if r.key else ""))
+    return 0
+
+
+def cmd_sync(args) -> int:
+    if args.background:
+        sync.trigger(config.load())
+        return 0
+    with _open() as store:
+        if not store.config.remotes:
+            if args.quiet:
+                return 0
+            raise CairnError("Sin remotos: `cairn remote add <nombre> ssh://usuario@host`")
+        results = sync.sync_all(store, args.remotos, timeout=args.timeout)
+    for r in results:
+        if not args.quiet or not r.ok:
+            print(f"{r.remote} ({r.peer or '?'}): {r.sent} enviado(s), {r.received} recibido(s)"
+                  + ("" if r.ok else f", {len(r.errors)} error(es)"))
+        for e in r.errors:
+            warn(f"  [error] {e}")
+    return 0 if all(r.ok for r in results) else 1
+
+
+def cmd_sync_peer(args) -> int:
+    if not args.stdio:
+        raise CairnError("sync-peer lo lanza `cairn sync` del otro lado por ssh (--stdio)")
+    return sync.serve_stdio(args.as_node)
 
 
 # ──────────────────────────────────────────────────────────────── parser
@@ -486,6 +571,50 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-mcp", action="store_true", help="no tocar el MCP")
     p.add_argument("--no-hooks", action="store_true", help="no tocar los hooks")
     p.set_defaults(func=cmd_integrate)
+
+    p = sub.add_parser("key", help="la clave pública de este nodo (para `authorize` en el otro)")
+    p.set_defaults(func=cmd_key)
+
+    p = sub.add_parser("authorize", help="acepta los eventos de un nodo y le da acceso de sync por ssh")
+    p.add_argument("nodo")
+    p.add_argument("clave", help="su clave pública (`cairn key` en ese nodo), o un archivo con ella")
+    p.add_argument("--no-ssh", action="store_true",
+                   help="sólo confiar en sus eventos (no se conecta a este nodo)")
+    p.add_argument("--command", help="cómo se invoca cairn acá, para authorized_keys "
+                   "(default: la ruta del comando)")
+    p.set_defaults(func=cmd_authorize)
+
+    p = sub.add_parser("revoke", help="le saca el acceso a un nodo y rechaza sus eventos nuevos")
+    p.add_argument("nodo")
+    p.set_defaults(func=cmd_revoke)
+
+    p = sub.add_parser("peers", help="los nodos autorizados")
+    p.set_defaults(func=cmd_peers)
+
+    r = sub.add_parser("remote", help="los nodos con los que sincroniza este")
+    rs = r.add_subparsers(dest="remote_cmd", metavar="<add|remove|list>")
+    p = rs.add_parser("add")
+    p.add_argument("nombre")
+    p.add_argument("url", help="ssh://usuario@host[:puerto]")
+    p.add_argument("--key", help="clave ssh (default: la del nodo)")
+    p.add_argument("--command", help="cómo se invoca cairn del otro lado (default: cairn)")
+    p = rs.add_parser("remove")
+    p.add_argument("nombre")
+    rs.add_parser("list")
+    r.set_defaults(func=cmd_remote, remote_cmd="list")
+
+    p = sub.add_parser("sync", help="intercambia eventos con los remotos")
+    p.add_argument("remotos", nargs="*", help="default: todos")
+    p.add_argument("--quiet", action="store_true", help="sólo errores")
+    p.add_argument("--timeout", type=float, default=60, help="segundos por remoto (default: 60)")
+    p.add_argument("--background", action="store_true",
+                   help="lanzarlo en segundo plano y volver (salida en <datos>/sync.log)")
+    p.set_defaults(func=cmd_sync)
+
+    p = sub.add_parser("sync-peer", help="el otro lado de `sync` (lo lanza ssh, no se corre a mano)")
+    p.add_argument("--stdio", action="store_true")
+    p.add_argument("--as", dest="as_node", help="identidad fijada por authorized_keys")
+    p.set_defaults(func=cmd_sync_peer)
 
     h = sub.add_parser("handoff", help="notas para la próxima conversación")
     hs = h.add_subparsers(dest="handoff_cmd", metavar="<new|take|drop|list|hook>", required=True)

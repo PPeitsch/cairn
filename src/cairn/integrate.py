@@ -36,9 +36,11 @@ class HookSpec:
     timeout: int = HOOK_TIMEOUT
 
 
-# Los hooks que cairn registra. La fase 3 suma los de sync.
+# Los hooks que cairn registra. El de handoffs trae primero lo de los remotos (si hay) y por eso
+# tiene más tiempo; al cerrar la sesión se empuja en segundo plano, sin demorar la salida.
 HOOKS = (
-    HookSpec("SessionStart", "startup|clear", ("handoff", "hook")),
+    HookSpec("SessionStart", "startup|clear", ("handoff", "hook"), timeout=30),
+    HookSpec("SessionEnd", None, ("sync", "--background")),
 )
 
 

@@ -65,13 +65,15 @@ CMD = ["/opt/cairn/bin/cairn"]
 
 def test_instala_sin_pisar_lo_ajeno(cc):
     rep = integrate.claude_code(CMD)
-    assert len(rep.actions) == 2
+    assert len(rep.actions) == 3
     s = settings(cc)
     assert s["model"] == "x"
     start = s["hooks"]["SessionStart"]
     assert start[0] == WIP_DOC_HOOK                        # wip-doc sigue ahí, primero
     assert start[1] == {"matcher": "startup|clear", "hooks": [
-        {"type": "command", "command": "/opt/cairn/bin/cairn handoff hook", "timeout": 10}]}
+        {"type": "command", "command": "/opt/cairn/bin/cairn handoff hook", "timeout": 30}]}
+    assert s["hooks"]["SessionEnd"] == [{"hooks": [
+        {"type": "command", "command": "/opt/cairn/bin/cairn sync --background", "timeout": 10}]}]
     assert integrate.registered_mcp()["args"] == ["mcp"]
     assert calls(cc) == ["mcp add --scope user cairn -- /opt/cairn/bin/cairn mcp"]
 
@@ -80,7 +82,7 @@ def test_idempotente(cc):
     integrate.claude_code(CMD)
     before = (cc / "settings.json").read_text()
     rep = integrate.claude_code(CMD)
-    assert rep.actions == [] and len(rep.unchanged) == 2
+    assert rep.actions == [] and len(rep.unchanged) == 3
     assert (cc / "settings.json").read_text() == before
     assert len(calls(cc)) == 1
 
@@ -101,7 +103,7 @@ def test_remove_deja_lo_ajeno(cc):
     original = settings(cc)
     integrate.claude_code(CMD)
     rep = integrate.claude_code(CMD, remove=True)
-    assert len(rep.actions) == 2
+    assert len(rep.actions) == 3
     assert settings(cc) == original
     assert integrate.registered_mcp() is None
     assert integrate.claude_code(CMD, remove=True).actions == []
@@ -117,7 +119,7 @@ def test_remove_borra_grupos_vacios(cc):
 def test_dry_run_no_toca_nada(cc):
     before = (cc / "settings.json").read_text()
     rep = integrate.claude_code(CMD, dry_run=True)
-    assert len(rep.actions) == 2
+    assert len(rep.actions) == 3
     assert (cc / "settings.json").read_text() == before
     assert calls(cc) == []
 
