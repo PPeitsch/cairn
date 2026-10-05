@@ -327,3 +327,60 @@ def test_cli_sync_por_ssh_falso(pair, tmp_path, monkeypatch, capsys):
     laptop.use()
     assert cli.main(["sync", "--quiet"]) == 0
     assert capsys.readouterr().out == ""
+
+
+# ──────────────────────────────────────────────────────────────── resolve
+
+def _divergir(laptop, vps):
+    doc = laptop.new("demo", "plan")
+    run_sync(laptop, vps)
+    with laptop.store() as s:
+        edit.apply(s, doc.name, body="# laptop\n", set_={"nota": "de laptop"})
+    with vps.store() as s:
+        vps.mp.setenv("CAIRN_NOW", "2026-03-10T13:00:00+00:00")
+        edit.apply(s, doc.name, body="# vps 1\n")
+        edit.apply(s, doc.name, body="# vps 2\n")
+    run_sync(laptop, vps)
+    return doc.name
+
+
+def test_resolve_quedarse_con_la_rama(pair, capsys):
+    from cairn import history
+    laptop, vps = pair
+    name = _divergir(laptop, vps)
+    laptop.use()
+    assert cli.main(["resolve", name]) == 0
+    out = capsys.readouterr().out
+    assert "1 rama(s) divergente(s)" in out and "(2 evento(s): edit, edit)" in out
+    assert "+# vps 2" in out
+    with laptop.store() as s:
+        [rama] = history.branches(s, docs.find(s, name))
+        tip = rama.tip.id
+    assert cli.main(["resolve", name, "--keep", tip[:8]]) == 0
+    assert "2 evento(s)" in capsys.readouterr().out
+    run_sync(laptop, vps)
+    for n in (laptop, vps):
+        with n.store() as s:
+            d = docs.find(s, name)
+            assert not d.divergent and d.body == "# vps 2\n" and "nota" not in d.meta
+            assert docs.check(s) == []
+
+
+def test_resolve_quedarse_con_la_principal(pair):
+    from cairn import history
+    laptop, vps = pair
+    name = _divergir(laptop, vps)
+    with vps.store() as s:
+        d, n = history.resolve(s, name, "main")
+        assert n == 2 and not d.divergent and d.body == "# laptop\n"
+        assert docs.check(s) == []
+        with pytest.raises(cli.CairnError, match="no tiene ramas divergentes"):
+            history.resolve(s, name, "main")
+
+
+def test_resolve_hash_que_no_es_rama(pair):
+    from cairn import history
+    laptop, vps = pair
+    name = _divergir(laptop, vps)
+    with laptop.store() as s, pytest.raises(cli.CairnError, match="no es la punta"):
+        history.resolve(s, name, "0000")

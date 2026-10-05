@@ -408,7 +408,8 @@ def check(store: Store) -> list[str]:
         problemas.append(f"la proyección tiene {proyectados} evento(s) y el log {en_log} — "
                          "correr `cairn rebuild`")
     db = store.projection.db
-    for r in db.execute("SELECT status, count(*) n FROM events WHERE status != 'applied' GROUP BY status"):
+    for r in db.execute("SELECT status, count(*) n FROM events WHERE status NOT IN ('applied', 'resolved') "
+                      "GROUP BY status"):
         que = {"divergent": "en ramas divergentes (dos nodos escribieron sobre el mismo head)",
                "orphan": "huérfanos (falta el evento anterior: sincronizar)"}.get(r["status"], r["status"])
         problemas.append(f"{r['n']} evento(s) {que}")
@@ -418,7 +419,7 @@ def check(store: Store) -> list[str]:
     for doc in all_docs(store):
         n = doc.name
         if doc.divergent:
-            problemas.append(f"{n} tiene ramas divergentes: `cairn log {n}` para verlas")
+            problemas.append(f"{n} tiene ramas divergentes: `cairn resolve {n}` para verlas y elegir")
         if doc.meta.get("tipo") not in TIPOS_DOC:
             problemas.append(f"{n} tiene tipo '{doc.meta.get('tipo', '')}' (válidos: {', '.join(TIPOS_DOC)})")
         if doc.scope != "ref":

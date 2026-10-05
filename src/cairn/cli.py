@@ -331,6 +331,28 @@ def cmd_diff(args) -> int:
     return 0
 
 
+def cmd_resolve(args) -> int:
+    with _open() as store:
+        if args.keep:
+            doc, n = history.resolve(store, args.doc, args.keep)
+            print(f"Resuelto: {doc.name} ({n} evento(s) de ramas divergentes; "
+                  f"{'queda la principal' if args.keep == 'main' else f'queda la rama {args.keep}'})")
+            return 0
+        doc = docs.find(store, args.doc)
+        if not doc.divergent:
+            print(f"{doc.name} no tiene ramas divergentes.")
+            return 0
+        ramas = history.branches(store, doc)
+        print(f"{doc.name}: la principal (head {doc.head[:10]}) y {len(ramas)} rama(s) divergente(s).\n")
+        for b in ramas:
+            print(f"rama {b.tip.id[:10]}  {b.tip.ts[:19].replace('T', ' ')}  {b.tip.node}  "
+                  f"({len(b.events)} evento(s): {', '.join(e.op for e in b.events)})")
+            sys.stdout.write(history.branch_diff(store, doc, b) or "  (mismo contenido que la principal)\n")
+            print()
+    print(f"Elegir: cairn resolve {doc.name} --keep main   |   --keep <hash de la rama>")
+    return 0
+
+
 # ──────────────────────────────────────────────────────────────── import / export
 
 def cmd_import(args) -> int:
@@ -543,6 +565,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("rev_a", nargs="?", help="desde (hash o ~N)")
     p.add_argument("rev_b", nargs="?", help="hasta (default: el head)")
     p.set_defaults(func=cmd_diff)
+
+    p = sub.add_parser("resolve", help="muestra las ramas divergentes de un doc y resuelve cuál queda")
+    p.add_argument("doc")
+    p.add_argument("--keep", metavar="main|HASH", help="`main` (la principal) o el hash de una rama")
+    p.set_defaults(func=cmd_resolve)
 
     p = sub.add_parser("import", help="importa los docs de <raíz>/{_wip,_done,_ref} (una vez)")
     p.add_argument("raiz", help="la carpeta que tiene _wip/, _done/ y _ref/ (p. ej. ~/projects)")

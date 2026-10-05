@@ -3,7 +3,8 @@
 Tablas:
 
 - `events`: todos los eventos conocidos, con su `status` en la cadena del doc (`applied`,
-  `divergent` si quedó en una rama que no es la principal, `orphan` si su `prev` no llegó).
+  `divergent` si quedó en una rama que no es la principal, `resolved` si es de una rama que un
+  `resolve` ya decidió, `orphan` si su `prev` no llegó).
 - `docs`: el estado actual de cada doc (front-matter en `meta`, cuerpo en `body`).
 - `links`: los vínculos entre docs (`origen`, `referencias`, `plan`), por id.
 - `revisions`: el estado después de cada evento de la cadena principal (historial, diff, show).
@@ -236,8 +237,12 @@ class Projection:
         """Rehace el estado del doc desde todos sus eventos."""
         events = self.doc_events(doc_id)
         main, divergent, orphan = chain(events)
+        # un `resolve` en la cadena principal da por resueltas las ramas que nombra
+        resolved = {i for e in main if e.op == "resolve" for i in e.payload.get("resolves") or []}
+        resolved &= divergent
+        divergent -= resolved
         db = self.db
-        for ids, status in ((divergent, "divergent"), (orphan, "orphan")):
+        for ids, status in ((divergent, "divergent"), (orphan, "orphan"), (resolved, "resolved")):
             db.executemany("UPDATE events SET status = ? WHERE id = ?", [(status, i) for i in ids])
         db.executemany("UPDATE events SET status = 'applied' WHERE id = ?", [(e.id,) for e in main])
         db.execute("DELETE FROM revisions WHERE doc_id = ?", (doc_id,))

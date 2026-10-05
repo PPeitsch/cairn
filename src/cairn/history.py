@@ -10,8 +10,9 @@ import json
 from dataclasses import dataclass
 
 from cairn import docs
-from cairn.docs import Doc
-from cairn.projection import DocState
+from cairn.docs import LINK_KINDS, Doc
+from cairn.events import Event
+from cairn.projection import DocState, chain, fold
 from cairn.store import CairnError, Store
 
 
@@ -119,3 +120,90 @@ def log(store: Store, ref: str | None = None, limit: int | None = None) -> list[
         sql += f" LIMIT {int(limit)}"
     return [LogLine(r["id"], r["ts"], r["node"], r["op"], r["name"], r["status"])
             for r in db.execute(sql, params)]
+
+
+# ──────────────────────────────────────────────────────────────── ramas divergentes
+
+@dataclass
+class Branch:
+    tip: Event                  # el último evento de la rama
+    events: list[Event]         # los de la rama que no están en la principal, en orden
+    state: DocState             # cómo queda el doc si se sigue esta rama
+
+
+def branches(store: Store, doc: Doc) -> list[Branch]:
+    """Las ramas sin resolver de un doc divergente: una por cada punta."""
+    events = store.projection.doc_events(doc.id)
+    by_id = {e.id: e for e in events}
+    main, divergent, _ = chain(events)
+    estados = dict(store.projection.db.execute(
+        "SELECT id, status FROM events WHERE doc_id = ?", (doc.id,)).fetchall())
+    pend = {i for i in divergent if estados.get(i) == "divergent"}
+    parents = {by_id[i].prev for i in pend}
+    out = []
+    for tip_id in sorted(pend - parents, key=lambda i: (by_id[i].ts, i)):
+        path, cur = [], by_id[tip_id]
+        while cur is not None:
+            path.append(cur)
+            cur = by_id.get(cur.prev) if cur.prev else None
+        path.reverse()
+        state = None
+        for e in path:
+            state = fold(state, e)
+        out.append(Branch(by_id[tip_id], [e for e in path if e.id in divergent], state))
+    return out
+
+
+def _change(cur: Doc, target: DocState) -> dict:
+    """El payload que lleva el doc de su estado actual al de `target`."""
+    p: dict = {}
+    if target.body != cur.body:
+        p["body"] = target.body
+    if target.name != cur.name:
+        p["name"] = target.name
+    set_ = {k: v for k, v in target.meta.items() if cur.meta.get(k) != v}
+    unset = sorted(k for k in cur.meta if k not in target.meta)
+    if set_:
+        p["set"] = set_
+    if unset:
+        p["unset"] = unset
+    add = [x for x in target.links if x not in cur.links and x[0] in LINK_KINDS]
+    rem = [x for x in cur.links if x not in target.links]
+    if add:
+        p["link_add"] = add
+    if rem:
+        p["link_remove"] = rem
+    return p
+
+
+def resolve(store: Store, ref: str, keep: str) -> tuple[Doc, int]:
+    """Resuelve las ramas divergentes de un doc. `keep`: `main` (queda como está) o el hash (4+
+    caracteres) de la punta de una rama, cuyo estado pasa a ser el del doc. Devuelve (doc,
+    eventos resueltos)."""
+    with store.writer() as w:
+        doc = docs.find(store, ref)
+        if not doc.divergent:
+            raise CairnError(f"{doc.name} no tiene ramas divergentes.")
+        ramas = branches(store, doc)
+        resolves = sorted(e.id for b in ramas for e in b.events)
+        payload: dict = {}
+        if keep != "main":
+            if len(keep) < 4:
+                raise CairnError("La rama se nombra con al menos 4 caracteres del hash de su punta")
+            found = [b for b in ramas if b.tip.id.startswith(keep)]
+            if len(found) != 1:
+                raise CairnError(f"{keep} no es la punta de una rama de {doc.name}"
+                                 + (" (ambiguo)" if found else "") + ": `cairn resolve "
+                                 f"{doc.name}` las lista")
+            payload = _change(doc, found[0].state)
+        w.emit("resolve", doc.id, {**payload, "resolves": resolves})
+    return docs.get(store, doc.id), len(resolves)
+
+
+def branch_diff(store: Store, doc: Doc, b: Branch) -> str:
+    snap = Doc(id=doc.id, name=b.state.name, meta=b.state.meta, body=b.state.body, scope=b.state.scope,
+               head=b.tip.id, created=doc.created, updated=b.tip.ts, divergent=True, links=b.state.links)
+    ta, tb = docs.render(store, doc), docs.render(store, snap)
+    return "".join(difflib.unified_diff(
+        ta.splitlines(keepends=True), tb.splitlines(keepends=True),
+        fromfile=f"{doc.name}@{doc.head[:8]} (principal)", tofile=f"{doc.name}@{b.tip.id[:8]} (rama)"))
