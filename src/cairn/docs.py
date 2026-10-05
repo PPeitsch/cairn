@@ -392,13 +392,15 @@ def weekly(store: Store, dias: int = 7) -> tuple[str, list[Doc]]:
 # ──────────────────────────────────────────────────────────────── check
 
 def check(store: Store) -> list[str]:
-    """Lo que no está en orden: el log (líneas corruptas, eventos sin proyectar, ramas
-    divergentes) y los docs (estado incoherente, nombres, links rotos, handoffs viejos)."""
+    """Lo que no está en orden: el log (líneas corruptas, firmas inválidas, eventos sin
+    proyectar, ramas divergentes) y los docs (estado incoherente, nombres, links rotos, handoffs viejos)."""
     problemas: list[str] = []
     en_log = 0
+    problemas += store.verifier.bad_peers
     for entry in store.log.read_all():
-        if entry.event is None:
-            problemas.append(f"logs/{entry.node}/{entry.segment}.jsonl byte {entry.offset}: {entry.error}")
+        why = entry.error if entry.event is None else store.verifier.problem(entry.event)
+        if why:
+            problemas.append(f"logs/{entry.node}/{entry.segment}.jsonl byte {entry.offset}: {why}")
         else:
             en_log += 1
     proyectados = store.projection.count_events()
