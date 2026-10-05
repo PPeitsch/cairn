@@ -18,7 +18,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cairn import __version__, config, docs, edit, history, sync
+from cairn import __version__, config, docs, edit, history, sync, tree
 from cairn.context import repo_of_path
 from cairn.store import CairnError, Store
 
@@ -129,7 +129,8 @@ def cairn_search(pattern: str, scope: Scope = "all", fts: bool = False) -> str:
             return "\n".join(f"{_linea(d)}\n    {d.tldr.splitlines()[0] if d.tldr else ''}".rstrip()
                              for d in found)
         hits, total = docs.search(store, pattern, _scopes(scope))
-    if not hits:
+        archivos = tree.search_files(store, pattern, _scopes(scope))
+    if not hits and not archivos:
         return f'Búsqueda "{pattern}": sin coincidencias en {total} docs.'
     out = [f'Búsqueda "{pattern}": {len(hits)} doc(s) de {total}']
     for h in hits:
@@ -137,6 +138,11 @@ def cairn_search(pattern: str, scope: Scope = "all", fts: bool = False) -> str:
         out += [f"    {n}: {line.strip()[:160]}" for n, line in h.lines[:5]]
         if len(h.lines) > 5:
             out.append(f"    (+{len(h.lines) - 5} más)")
+    if archivos:
+        out += ["", f"archivos de scripts/ y validations/ ({len(archivos)}):"]
+        for f in archivos:
+            out.append(f"  {f.path}")
+            out += [f"    {n}: {line.strip()[:160]}" for n, line in f.lines[:5]]
     return "\n".join(out)
 
 
@@ -234,9 +240,9 @@ def cairn_weekly(dias: int = 7) -> str:
 
 def cairn_check() -> str:
     """Verifica que la base esté en orden: log, proyección, docs (estado, nombres, links,
-    handoffs viejos)."""
+    handoffs viejos) y la raíz de proyectos (docs sueltos fuera de cairn, archivos mal ubicados)."""
     with _open() as store:
-        problemas = docs.check(store)
+        problemas = docs.check(store) + tree.problems(store)
     if not problemas:
         return "Todo en orden."
     return "\n".join([f"{len(problemas)} problema(s):", *(f"  - {p}" for p in problemas)])

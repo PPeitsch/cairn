@@ -9,7 +9,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from cairn import __version__, access, clock, config, docs, edit, history, integrate, sync, transfer
+from cairn import __version__, access, clock, config, docs, edit, history, integrate, sync, transfer, tree
 from cairn.context import repo_of_path
 from cairn.markdown import first_sentences, fmt_date
 from cairn.store import CairnError, Store
@@ -154,7 +154,8 @@ def cmd_search(args) -> int:
                 print()
             return 0
         hits, total = docs.search(store, args.patron, _scopes(args.scope))
-    if not hits:
+        archivos = tree.search_files(store, args.patron, _scopes(args.scope))
+    if not hits and not archivos:
         print(f"Búsqueda \"{args.patron}\" — sin coincidencias en {total} docs")
         return 0
     print(f"Búsqueda \"{args.patron}\" — {len(hits)} doc(s) de {total}")
@@ -174,6 +175,13 @@ def cmd_search(args) -> int:
         for n, line in h.lines[:3]:
             print(f"      │ {n}: {line.strip()[:140]}")
         print()
+    if archivos:
+        print(f"━━━━━  archivos de scripts/ y validations/  ({len(archivos)})  ━━━━━\n")
+        for f in archivos:
+            print(f"  {f.path}   ·   {len(f.lines)} coincidencia(s)")
+            for n, line in f.lines[:3]:
+                print(f"      │ {n}: {line.strip()[:140]}")
+            print()
     return 0
 
 
@@ -211,7 +219,7 @@ def cmd_weekly(args) -> int:
 
 def cmd_check(args) -> int:
     with _open() as store:
-        problemas = docs.check(store)
+        problemas = docs.check(store) + tree.problems(store)
         print(f"cairn check   (nodo: {store.config.node}, datos: {store.config.data_dir})")
     for p in problemas:
         print(f"  [aviso] {p}")
@@ -397,7 +405,8 @@ def cmd_integrate(args) -> int:
     if command == []:
         raise CairnError("--command vacío")
     rep = integrate.claude_code(command, remove=args.remove, dry_run=args.dry_run,
-                                mcp=not args.no_mcp, hooks=not args.no_hooks)
+                                mcp=not args.no_mcp, hooks=not args.no_hooks,
+                                replace_wip_doc=args.replace_wip_doc)
     prefijo = "[dry-run] " if args.dry_run else ""
     for a in rep.actions:
         print(f"{prefijo}{a}")
@@ -599,6 +608,8 @@ def build_parser() -> argparse.ArgumentParser:
                    "p. ej. \"ssh vps cairn\" para usar la base de otro nodo)")
     p.add_argument("--no-mcp", action="store_true", help="no tocar el MCP")
     p.add_argument("--no-hooks", action="store_true", help="no tocar los hooks")
+    p.add_argument("--replace-wip-doc", action="store_true",
+                   help="sacar también el hook de handoffs de wip-doc (al migrar)")
     p.set_defaults(func=cmd_integrate)
 
     p = sub.add_parser("key", help="la clave pública de este nodo (para `authorize` en el otro)")
