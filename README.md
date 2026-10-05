@@ -4,7 +4,8 @@ Base local-first para los docs de trabajo (diagnósticos, planes, referencias) y
 conversaciones. Cada lugar donde se trabaja es un **nodo** con su propia base; los nodos se
 sincronizan por ssh, al estilo git, y los agentes acceden por MCP stdio.
 
-> Estado: en construcción. Todavía no hace nada útil.
+> Estado: en construcción. Fase 1 (núcleo local: log, proyección, CLI e importador) lista;
+> faltan el MCP (fase 2) y el sync por ssh (fase 3).
 
 ## Cómo funciona
 
@@ -35,6 +36,47 @@ Los datos nunca van en este repo: cada nodo tiene los suyos y el sync los iguala
 uv tool install git+<url-del-repo>    # o: pipx install git+<url-del-repo>
 cairn --version
 ```
+
+## Uso
+
+```bash
+cairn init                                  # config, datos y base vacía (nodo = hostname)
+cairn import ~/projects                     # una vez: los docs de _wip/_done/_ref (--dry-run)
+
+cairn new bcra rate_limit_429 bug           # diagnóstico; también infra (default), plan, ref
+cairn edit <doc>                            # en $EDITOR; o --stdin / --file / --set k=v / --unset k
+cairn close <doc> [--force]                 # corta si quedan `- [ ]` sin tildar
+cairn reopen <doc> [motivo]
+cairn promote <doc> <area> <tema> [--seccion S]...   # secciones a una referencia, vinculadas
+
+cairn list [wip|done|ref|all]
+cairn search <regex> [scope]                # o --fts <consulta> por relevancia
+cairn weekly [dias] [resumen|full]
+cairn check                                 # log, proyección y docs en orden (sale 1 si no)
+
+cairn handoff new <area> <tema> [--para R]... [--plan <doc>]...
+cairn handoff take [<nota>] | drop <nota> [motivo] | list [--all] | hook
+
+cairn show <doc>[@rev]                      # rev: prefijo del hash o ~N
+cairn log [<doc>] [-n N]
+cairn diff <doc> [rev_a] [rev_b]            # default: el último cambio
+cairn export <destino> [scope] [--force]    # los docs como árbol _wip/_done/_ref
+cairn rebuild                               # rehace la base SQLite desde el log
+```
+
+Un doc se nombra por su nombre (`2026-10-04_cairn_arquitectura`, con o sin `.md`) o por un
+prefijo de su id. No hay carpetas: si un doc está abierto, cerrado o es referencia lo dicen su
+tipo y su estado, y los vínculos (`origen`, `referencias`, `plan`) se guardan por id.
+
+## Desarrollo
+
+```bash
+uv run pytest
+uvx ruff check src tests
+```
+
+Los tests corren contra un nodo aislado en un temporal: `CAIRN_CONFIG_DIR`, `CAIRN_DATA_DIR` y
+`CAIRN_PROJECTS` cambian las rutas, y `CAIRN_NOW` fija el reloj.
 
 ## Licencia
 
