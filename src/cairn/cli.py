@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from cairn import __version__, clock, config, docs
+from cairn import __version__, clock, config, docs, edit, history, transfer
 from cairn.context import repo_of_path
 from cairn.markdown import first_sentences, fmt_date
 from cairn.store import CairnError, Store
@@ -278,6 +278,79 @@ def cmd_handoff_hook(args) -> int:
     return 0
 
 
+# ──────────────────────────────────────────────────────────────── edit / historial
+
+def cmd_edit(args) -> int:
+    with _open() as store:
+        if args.file or args.stdin or args.set or args.unset:
+            text = None
+            if args.stdin:
+                text = sys.stdin.read()
+            elif args.file:
+                text = Path(args.file).read_text(encoding="utf-8")
+            r = edit.apply(store, args.doc, text=text, set_=edit.parse_assignments(args.set or []),
+                           unset=args.unset)
+        else:
+            r = edit.interactive(store, args.doc)
+    print(f"Guardado: {r.doc.name}" if r.extra.get("changed") else f"Sin cambios: {r.doc.name}")
+    _warn_all(r.warnings)
+    return 0
+
+
+def cmd_show(args) -> int:
+    with _open() as store:
+        _, text = history.show(store, args.doc)
+    sys.stdout.write(text)
+    return 0
+
+
+def cmd_log(args) -> int:
+    with _open() as store:
+        lines = history.log(store, args.doc, args.n)
+    for ln in lines:
+        marca = "" if ln.status == "applied" else f"  [{ln.status}]"
+        print(f"{ln.event_id[:10]}  {ln.ts[:19].replace('T', ' ')}  {ln.node:<10} {ln.op:<13} "
+              f"{ln.doc_name}{marca}")
+    return 0
+
+
+def cmd_diff(args) -> int:
+    with _open() as store:
+        out = history.diff(store, args.doc, args.rev_a, args.rev_b)
+    sys.stdout.write(out or "Sin diferencias.\n")
+    return 0
+
+
+# ──────────────────────────────────────────────────────────────── import / export
+
+def cmd_import(args) -> int:
+    with _open() as store:
+        rep = transfer.import_tree(store, Path(args.raiz), dry_run=args.dry_run)
+    verbo = "Se importarían" if args.dry_run else "Importados"
+    print(f"{verbo}: {len(rep.imported)} doc(s), {rep.links} vínculo(s)")
+    if args.verbose:
+        for x in rep.imported:
+            print(f"  {x}")
+    for x in rep.skipped:
+        warn(f"[salteado] {x}")
+    for x in rep.unresolved:
+        warn(f"[link sin resolver, queda como texto] {x}")
+    _warn_all(f"[aviso] {x}" for x in rep.warnings)
+    if rep.ignored_files:
+        warn(f"[nota] {rep.ignored_files} archivo(s) que no son docs (scripts/, validations/, …) "
+             "no se importan")
+    return 0
+
+
+def cmd_export(args) -> int:
+    with _open() as store:
+        rep = transfer.export_tree(store, Path(args.destino), _scopes(args.scope), force=args.force)
+    print(f"Exportados: {len(rep.written)} escrito(s), {rep.unchanged} sin cambios, en {args.destino}")
+    for x in rep.stale:
+        warn(f"[aviso] {x} no corresponde a ningún doc exportado (¿cambió de carpeta?): no se borró")
+    return 0
+
+
 # ──────────────────────────────────────────────────────────────── parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -337,6 +410,41 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("check", help="¿está en orden? log, proyección y docs (sale 1 si hay problemas)")
     p.set_defaults(func=cmd_check)
 
+    p = sub.add_parser("edit", help="edita un doc en $EDITOR (o con --file/--stdin/--set/--unset)")
+    p.add_argument("doc")
+    p.add_argument("--file", help="el doc entero desde un archivo (sin front-matter: sólo el cuerpo)")
+    p.add_argument("--stdin", action="store_true", help="el doc entero desde stdin")
+    p.add_argument("--set", action="append", metavar="CLAVE=VALOR", help="campo del front-matter")
+    p.add_argument("--unset", action="append", metavar="CLAVE", help="saca un campo del front-matter")
+    p.set_defaults(func=cmd_edit)
+
+    p = sub.add_parser("show", help="muestra un doc como archivo; `doc@rev` muestra una revisión")
+    p.add_argument("doc", help="nombre o id, con @<hash> o @~N para una revisión")
+    p.set_defaults(func=cmd_show)
+
+    p = sub.add_parser("log", help="historial de eventos de un doc (o de toda la base)")
+    p.add_argument("doc", nargs="?")
+    p.add_argument("-n", type=int, help="cantidad máxima")
+    p.set_defaults(func=cmd_log)
+
+    p = sub.add_parser("diff", help="diff entre revisiones (default: el último cambio)")
+    p.add_argument("doc")
+    p.add_argument("rev_a", nargs="?", help="desde (hash o ~N)")
+    p.add_argument("rev_b", nargs="?", help="hasta (default: el head)")
+    p.set_defaults(func=cmd_diff)
+
+    p = sub.add_parser("import", help="importa los docs de <raíz>/{_wip,_done,_ref} (una vez)")
+    p.add_argument("raiz", help="la carpeta que tiene _wip/, _done/ y _ref/ (p. ej. ~/projects)")
+    p.add_argument("--dry-run", action="store_true", help="mostrar qué se importaría sin escribir")
+    p.add_argument("-v", "--verbose", action="store_true", help="listar cada doc")
+    p.set_defaults(func=cmd_import)
+
+    p = sub.add_parser("export", help="escribe los docs como archivos en <destino>/{_wip,_done,_ref}")
+    p.add_argument("destino")
+    p.add_argument("scope", nargs="?", default="all", choices=["wip", "done", "ref", "all"])
+    p.add_argument("-f", "--force", action="store_true", help="pisar archivos con otro contenido")
+    p.set_defaults(func=cmd_export)
+
     p = sub.add_parser("rebuild", help="rehace la proyección SQLite desde el log de eventos")
     p.set_defaults(func=cmd_rebuild)
 
@@ -371,11 +479,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     try:
-        return args.func(args) or 0
+        code = args.func(args) or 0
+        sys.stdout.flush()         # que un pipe cerrado salte acá y no al salir
+        return code
     except (CairnError, config.ConfigError) as e:
         warn(str(e))
         return 1
-    except BrokenPipeError:        # `cairn search x | head`
+    except BrokenPipeError:        # `cairn search x | head`: salir callado, sin el aviso de flush
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         return 0
 
 
