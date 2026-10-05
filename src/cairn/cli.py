@@ -5,10 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 
-from cairn import __version__, clock, config, docs, edit, history, transfer
+from cairn import __version__, clock, config, docs, edit, history, integrate, transfer
 from cairn.context import repo_of_path
 from cairn.markdown import first_sentences, fmt_date
 from cairn.store import CairnError, Store
@@ -360,6 +361,22 @@ def cmd_mcp(args) -> int:
     return 0
 
 
+def cmd_integrate(args) -> int:
+    command = shlex.split(args.command) if args.command else None
+    if command == []:
+        raise CairnError("--command vacío")
+    rep = integrate.claude_code(command, remove=args.remove, dry_run=args.dry_run,
+                                mcp=not args.no_mcp, hooks=not args.no_hooks)
+    prefijo = "[dry-run] " if args.dry_run else ""
+    for a in rep.actions:
+        print(f"{prefijo}{a}")
+    for u in rep.unchanged:
+        print(f"ya estaba: {u}")
+    if not rep.actions:
+        print("Nada que hacer." if args.remove else "Integración al día.")
+    return 0
+
+
 # ──────────────────────────────────────────────────────────────── parser
 
 def build_parser() -> argparse.ArgumentParser:
@@ -459,6 +476,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("mcp", help="servidor MCP por stdio (lo lanza el agente, no se corre a mano)")
     p.set_defaults(func=cmd_mcp)
+
+    p = sub.add_parser("integrate", help="registra el MCP y los hooks de cairn en un agente")
+    p.add_argument("target", choices=["claude-code"])
+    p.add_argument("--remove", action="store_true", help="deshace la integración")
+    p.add_argument("--dry-run", action="store_true", help="muestra qué haría, sin tocar nada")
+    p.add_argument("--command", help="cómo invocar cairn (default: la ruta del comando; "
+                   "p. ej. \"ssh vps cairn\" para usar la base de otro nodo)")
+    p.add_argument("--no-mcp", action="store_true", help="no tocar el MCP")
+    p.add_argument("--no-hooks", action="store_true", help="no tocar los hooks")
+    p.set_defaults(func=cmd_integrate)
 
     h = sub.add_parser("handoff", help="notas para la próxima conversación")
     hs = h.add_subparsers(dest="handoff_cmd", metavar="<new|take|drop|list|hook>", required=True)
