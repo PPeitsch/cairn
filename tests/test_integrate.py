@@ -162,3 +162,34 @@ def test_cli(cc, capsys):
     assert cli.main(["integrate", "claude-code", "--command", "/opt/cairn/bin/cairn"]) == 0
     assert cli.main(["integrate", "claude-code", "--command", "/opt/cairn/bin/cairn"]) == 0
     assert "ya estaba" in capsys.readouterr().out
+
+
+def test_replace_wip_doc_saca_su_hook(cc):
+    integrate.claude_code(CMD)                         # convivencia: los dos hooks
+    rep = integrate.claude_code(CMD, replace_wip_doc=True)
+    assert rep.actions == ["sacar hook SessionStart de wip-doc: /x/skills/wip-doc/driver.py handoff hook"]
+    hooks = [h["command"] for g in settings(cc)["hooks"]["SessionStart"] for h in g["hooks"]]
+    assert hooks == ["/opt/cairn/bin/cairn handoff hook"]
+    assert integrate.claude_code(CMD, replace_wip_doc=True).actions == []
+
+
+def test_replace_wip_doc_en_un_paso_y_dry_run(cc):
+    before = (cc / "settings.json").read_text()
+    rep = integrate.claude_code(CMD, replace_wip_doc=True, dry_run=True)
+    assert len(rep.actions) == 4 and (cc / "settings.json").read_text() == before
+    integrate.claude_code(CMD, replace_wip_doc=True)
+    start = settings(cc)["hooks"]["SessionStart"]
+    assert [h["command"] for g in start for h in g["hooks"]] == ["/opt/cairn/bin/cairn handoff hook"]
+
+
+def test_replace_wip_doc_no_va_con_remove(cc):
+    with pytest.raises(integrate.CairnError, match="replace-wip-doc"):
+        integrate.claude_code(CMD, remove=True, replace_wip_doc=True)
+
+
+def test_reconoce_el_hook_de_wip_doc():
+    assert integrate._is_wip_doc_hook("/home/p/.claude/skills/wip-doc/driver.py handoff hook")
+    assert integrate._is_wip_doc_hook("python3 /x/wip-doc/driver.py handoff hook")
+    assert not integrate._is_wip_doc_hook("/x/wip-doc/driver.py handoff list")
+    assert not integrate._is_wip_doc_hook("/x/otro/driver.py handoff hook")
+    assert not integrate._is_wip_doc_hook("/opt/cairn/bin/cairn handoff hook")

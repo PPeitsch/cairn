@@ -140,10 +140,11 @@ class EventLog:
                 out.setdefault(n, {})[seg] = [len(data), hashlib.sha256(data).hexdigest()]
         return out
 
-    def append_raw(self, node: str, segment: str, offset: int, data: bytes) -> None:
-        """Agrega bytes que llegaron por sync al segmento de otro nodo. Sólo si lo local es
-        exactamente lo que el otro lado creía (`offset`): si no, no se toca nada."""
-        if node == self.node:
+    def append_raw(self, node: str, segment: str, offset: int, data: bytes, own: bool = False) -> None:
+        """Agrega bytes que llegaron por sync al segmento de otro nodo (o al propio, con `own`:
+        el restore de un nodo que perdió sus datos). Sólo si lo local es exactamente lo que el
+        otro lado creía (`offset`): si no, no se toca nada."""
+        if node == self.node and not own:
             raise EventError(f"el log de {node} sólo lo escribe {node}")
         if not NODE_RE.match(node) or not (segment.isdigit() and len(segment) == 6):
             raise EventError(f"segmento inválido: {node}/{segment}")

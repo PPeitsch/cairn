@@ -20,6 +20,13 @@ Lo que llega se valida antes de escribir nada: ningún nodo acepta datos de su p
 un nodo desconocido o revocado, ni eventos sin firma válida. Una línea que no se puede leer
 (una escritura cortada en el nodo de origen) se copia igual, para que los logs sigan siendo
 prefijos, y la proyección la ignora.
+
+Restore (`sync --restore <remoto>`): un nodo que perdió sus datos y se reinicializó con el mismo
+nombre pide su propio log. El saludo lleva `"restore": true`; el servidor contesta con las
+claves que tiene registradas para ese nodo (`"keys": {"key", "old"}`) y manda también los bloques
+del log del cliente. El cliente sólo lo acepta si no tiene eventos propios, si la clave vigente
+que el servidor tiene es la suya (si se reinstaló con clave nueva, el servidor la tuvo que
+aceptar antes con `authorize --replace`) y si cada evento verifica con alguna de sus claves.
 """
 
 from __future__ import annotations
@@ -93,8 +100,8 @@ class Channel:
         return msg[key]
 
 
-def _hello(store: Store) -> dict:
-    return {"cairn": "sync", "v": PROTO, "node": store.config.node}
+def _hello(store: Store, **extra) -> dict:
+    return {"cairn": "sync", "v": PROTO, "node": store.config.node, **extra}
 
 
 def _check_hello(msg: dict) -> str:
@@ -108,13 +115,14 @@ def _check_hello(msg: dict) -> str:
 
 # ──────────────────────────────────────────────────────────────── qué mandar, qué aceptar
 
-def chunks_for(store: Store, theirs: dict) -> tuple[list[dict], list[str]]:
-    """Los bloques que al otro le faltan según su inventario. (bloques, conflictos)."""
+def chunks_for(store: Store, theirs: dict, restore: bool = False) -> tuple[list[dict], list[str]]:
+    """Los bloques que al otro le faltan según su inventario. (bloques, conflictos). Con
+    `restore` incluye su propio log."""
     out, conflicts = [], []
     if not isinstance(theirs, dict):
         raise ProtocolError("inventario inválido")
     for node in store.log.nodes():
-        if node == theirs.get("__self__"):
+        if node == theirs.get("__self__") and not restore:
             continue
         for seg in store.log.segments(node):
             data = store.log.read_bytes(node, seg)
@@ -131,15 +139,16 @@ def chunks_for(store: Store, theirs: dict) -> tuple[list[dict], list[str]]:
     return out, conflicts
 
 
-def _validate(store: Store, node: str, data: bytes) -> int:
+def _validate(store: Store, node: str, data: bytes, restore: bool = False) -> int:
     """Cuántos eventos válidos trae el bloque; ProtocolError si algo no se acepta."""
     peer = store.config.peers.get(node)
     if node == store.config.node:
-        raise ProtocolError(f"datos para el log de este mismo nodo ({node}): sólo lo escribe él")
-    if peer is None:
+        if not restore:
+            raise ProtocolError(f"datos para el log de este mismo nodo ({node}): sólo lo escribe él")
+    elif peer is None:
         raise ProtocolError(f"eventos de {node}, que no está autorizado acá: `cairn authorize {node} "
                             "<clave> --no-ssh`")
-    if peer.revoked:
+    if peer is not None and peer.revoked:
         raise ProtocolError(f"eventos nuevos de {node}, revocado el {peer.revoked}")
     n = 0
     for raw in data.split(b"\n")[:-1]:
@@ -157,8 +166,9 @@ def _validate(store: Store, node: str, data: bytes) -> int:
     return n
 
 
-def receive(store: Store, chunks: list[dict]) -> tuple[int, list[str]]:
-    """Valida y agrega los bloques. Los que no se aceptan se reportan; los demás entran."""
+def receive(store: Store, chunks: list[dict], restore: bool = False) -> tuple[int, list[str]]:
+    """Valida y agrega los bloques. Los que no se aceptan se reportan; los demás entran. Con
+    `restore` se acepta el log propio (el nodo perdió sus datos y lo recupera de un par)."""
     accepted, errors = 0, []
     with store.receiving() as log:
         for c in chunks:
@@ -167,8 +177,8 @@ def receive(store: Store, chunks: list[dict]) -> tuple[int, list[str]]:
                 data = base64.b64decode(c["data"], validate=True)
                 if not isinstance(offset, int):
                     raise ProtocolError("offset inválido")
-                n = _validate(store, node, data)
-                log.append_raw(node, seg, offset, data)
+                n = _validate(store, node, data, restore)
+                log.append_raw(node, seg, offset, data, own=restore)
                 accepted += n
             except (KeyError, TypeError, ValueError) as e:
                 errors.append(f"bloque inválido: {e}")
@@ -204,7 +214,9 @@ def serve(store: Store, ch: Channel, as_node: str | None = None) -> Result:
     """El lado `sync-peer`. `as_node`: la identidad que fijó `authorized_keys`."""
     res = Result(remote="")
     try:
-        peer = _check_hello(ch.recv())
+        hello = ch.recv()
+        peer = _check_hello(hello)
+        restore = hello.get("restore") is True
         known = store.config.peers.get(peer)
         if as_node and peer != as_node:
             raise ProtocolError(f"la clave es de {as_node} y el saludo dice {peer}")
@@ -215,28 +227,61 @@ def serve(store: Store, ch: Channel, as_node: str | None = None) -> Result:
         ch.send({"error": str(e)})
         res.errors.append(str(e))
         return res
-    ch.send(_hello(store))
+    extra = {"keys": {"key": known.key, "old": [[k.key, k.until] for k in known.old]}} if restore else {}
+    ch.send(_hello(store, **extra))
     theirs = ch.expect("inventory")
     ch.send({"inventory": _inventory(store)})
     res.received, errors = receive(store, _recv_chunks(ch))
     res.errors += errors
-    chunks, conflicts = chunks_for(store, theirs)
+    chunks, conflicts = chunks_for(store, theirs, restore)
     ch.send({"result": {"accepted": res.received, "errors": errors + conflicts}})
     _send_chunks(ch, chunks)
     res.errors += conflicts
     return res
 
 
-def client(store: Store, ch: Channel, name: str) -> Result:
+def _adopt_keys(store: Store, record, peer: str) -> int:
+    """Restore: comprueba que el par tenga registrada la clave vigente de este nodo y adopta
+    las anteriores que tenga (para verificar lo que este nodo firmó antes). Cuántas sumó."""
+    from cairn import keys
+    if not isinstance(record, dict) or not isinstance(record.get("key"), str):
+        raise ProtocolError(f"{peer} no contestó el restore (¿otra versión de cairn?)")
+    mine = keys.normalize_public(store.public_line())
+    try:
+        theirs = keys.normalize_public(record["key"])
+        old = [config.OldKey(keys.normalize_public(k), str(u)) for k, u in record.get("old") or []]
+    except (keys.KeyFileError, TypeError, ValueError) as e:
+        raise ProtocolError(f"{peer} mandó claves inválidas: {e}") from None
+    if theirs != mine:
+        raise ProtocolError(f"{peer} tiene otra clave para {store.config.node}: si este nodo se "
+                            f"reinstaló, en {peer} `cairn authorize {store.config.node} '<cairn key>' "
+                            "--replace` y volver a probar")
+    known = {k.key for k in store.config.old_keys}
+    nuevas = [k for k in old if k.key not in known and k.key != mine]
+    if nuevas:
+        merged = [*store.config.old_keys, *nuevas]
+        store.config = config.update(lambda raw: raw.setdefault("node", {}).update(
+            {"old": config.old_keys_table(merged)}))
+        store.verifier = type(store.verifier)(store.config, store.key.public_key())
+    return len(nuevas)
+
+
+def client(store: Store, ch: Channel, name: str, restore: bool = False) -> Result:
     res = Result(remote=name)
-    ch.send(_hello(store))
-    peer = _check_hello(ch.recv())
+    if restore and store.log.segments(store.config.node):
+        raise ProtocolError(f"{store.config.node} ya tiene eventos propios: el restore es para un nodo "
+                            "que perdió sus datos y se reinicializó")
+    ch.send(_hello(store, **({"restore": True} if restore else {})))
+    hello = ch.recv()
+    peer = _check_hello(hello)
     res.peer = peer
     if peer == store.config.node:
         raise ProtocolError(f"el remoto {name} es este mismo nodo ({peer})")
     if peer not in store.config.peers:
         raise ProtocolError(f"el remoto {name} es el nodo {peer}, que no está autorizado acá: "
                             f"`cairn authorize {peer} <su clave> --no-ssh`")
+    if restore:
+        _adopt_keys(store, hello.get("keys"), peer)
     ch.send({"inventory": _inventory(store)})
     theirs = ch.expect("inventory")
     chunks, conflicts = chunks_for(store, theirs)
@@ -245,7 +290,7 @@ def client(store: Store, ch: Channel, name: str) -> Result:
     their = ch.expect("result")
     res.sent = int(their.get("accepted") or 0)
     res.errors += [f"{peer} rechazó: {e}" for e in their.get("errors") or []]
-    res.received, errors = receive(store, _recv_chunks(ch))
+    res.received, errors = receive(store, _recv_chunks(ch), restore)
     res.errors += errors
     return res
 
@@ -263,7 +308,8 @@ def ssh_command(cfg: config.Config, remote: config.Remote) -> list[str]:
     return [*ssh, *opts, dest, *shlex.split(remote.command or "cairn"), "sync-peer", "--stdio"]
 
 
-def sync_remote(store: Store, remote: config.Remote, timeout: float | None = None) -> Result:
+def sync_remote(store: Store, remote: config.Remote, timeout: float | None = None,
+                restore: bool = False) -> Result:
     argv = ssh_command(store.config, remote)
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -279,7 +325,7 @@ def sync_remote(store: Store, remote: config.Remote, timeout: float | None = Non
     if timer:
         timer.start()
     try:
-        res = client(store, Channel(proc.stdout, proc.stdin), remote.name)
+        res = client(store, Channel(proc.stdout, proc.stdin), remote.name, restore)
     except (ProtocolError, OSError) as e:
         res = Result(remote.name, errors=[str(e)])
     finally:
@@ -315,7 +361,10 @@ def sync_all(store: Store, names: list[str] | None = None, timeout: float | None
 
 def serve_stdio(as_node: str | None = None) -> int:
     with Store(config.load()) as store:
-        res = serve(store, Channel(sys.stdin.buffer, sys.stdout.buffer), as_node)
+        try:
+            res = serve(store, Channel(sys.stdin.buffer, sys.stdout.buffer), as_node)
+        except (ProtocolError, OSError) as e:   # el cliente cortó a mitad de camino (lo reporta él)
+            res = Result(remote="", errors=[str(e)])
     for e in res.errors:
         print(f"cairn sync-peer: {e}", file=sys.stderr)
     return 0 if res.ok else 1

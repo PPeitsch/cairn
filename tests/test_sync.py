@@ -22,6 +22,7 @@ NOW = "2026-03-10T12:00:00+00:00"
 class Node:
     def __init__(self, name, root, monkeypatch):
         self.name, self.root, self.mp = name, root / name, monkeypatch
+        self.now = NOW
         (self.root / "projects").mkdir(parents=True)
         self.use()
         config.write(name)
@@ -30,7 +31,7 @@ class Node:
 
     def env(self) -> dict:
         return {"CAIRN_CONFIG_DIR": str(self.root / "config"), "CAIRN_DATA_DIR": str(self.root / "data"),
-                "CAIRN_PROJECTS": str(self.root / "projects"), "CAIRN_NOW": NOW,
+                "CAIRN_PROJECTS": str(self.root / "projects"), "CAIRN_NOW": self.now,
                 "CAIRN_AUTHORIZED_KEYS": str(self.root / "authorized_keys")}
 
     def use(self):
@@ -384,3 +385,180 @@ def test_resolve_hash_que_no_es_rama(pair):
     name = _divergir(laptop, vps)
     with laptop.store() as s, pytest.raises(cli.CairnError, match="no es la punta"):
         history.resolve(s, name, "0000")
+
+
+# ──────────────────────────────────────────────────────────────── cambio de clave y restore
+
+def at(node, when):
+    node.now = when
+    return node.use()
+
+
+def test_rotate_y_replace_mantienen_lo_viejo(pair, capsys):
+    laptop, vps = pair
+    doc = laptop.new("demo", "antes")
+    run_sync(laptop, vps)
+    with laptop.store() as s:
+        old_priv = s.key
+        out = access.rotate_key(s)
+        assert "--replace" in out[-1]
+        assert docs.check(s) == []                    # lo propio de antes sigue verificando
+    with laptop.store() as s:
+        assert s.rebuild() == 1 and docs.check(s) == [] and len(s.config.old_keys) == 1
+        new_pub = s.public_line()
+    at(laptop, "2026-03-11T12:00:00+00:00").new("demo", "despues")
+    res, _ = run_sync(laptop, vps)                    # el vps todavía no conoce la clave nueva
+    assert any("firma inválida" in e for e in res.errors)
+
+    at(vps, "2026-03-11T10:00:00+00:00")
+    with pytest.raises(cli.CairnError, match="--replace"):
+        access.authorize("laptop", new_pub, ssh=True, command=["/opt/cairn"])
+    hecho = access.authorize("laptop", new_pub, ssh=True, command=["/opt/cairn"], replace=True)
+    assert any("la clave anterior de laptop" in h for h in hecho)
+    peer = config.load().peers["laptop"]
+    assert [k.until[:10] for k in peer.old] == ["2026-03-11"]
+    res, _ = run_sync(laptop, vps)
+    assert res.ok, res.errors
+    assert vps.names() == {doc.name, "2026-03-11_demo_despues"}
+    with vps.store() as s:
+        assert s.rebuild() == 2 and docs.check(s) == []
+
+    # con la clave vieja no se puede firmar nada posterior al cambio
+    from cairn import keys
+    from cairn.events import Event
+    with vps.store() as s:
+        head = docs.find(s, doc.name)
+        ev = Event.new(node="laptop", ts="2026-03-12T00:00:00.000000+00:00", op="edit",
+                       doc_id=head.id, payload={"body": "# falso\n"}, prev=s.projection.head(head.id))
+        ev = Event(**{**ev.__dict__, "sig": keys.sign(old_priv, ev.id)})
+        assert "se reemplazó el 2026-03-11" in s.verifier.problem(ev)
+        viejo = Event(**{**ev.__dict__, "ts": "2026-03-10T00:00:00.000000+00:00"}).with_id()
+        viejo = Event(**{**viejo.__dict__, "sig": keys.sign(old_priv, viejo.id)})
+        assert s.verifier.problem(viejo) is None
+
+
+def test_reautorizar_un_revocado_conserva_lo_anterior(pair):
+    laptop, vps = pair
+    laptop.new("demo", "antes")
+    run_sync(laptop, vps)
+    otro = Node("otro-laptop", vps.root.parent, vps.mp)
+    vps.use()
+    access.revoke("laptop")
+    access.authorize("laptop", otro.pub, ssh=False)
+    peer = config.load().peers["laptop"]
+    assert peer.revoked is None and [k.until[:10] for k in peer.old] == ["2026-03-10"]
+    with vps.store() as s:
+        assert s.rebuild() == 1 and docs.check(s) == []
+
+
+def test_peers_muestra_las_claves_anteriores(pair, capsys):
+    laptop, vps = pair
+    with laptop.store() as s:
+        access.rotate_key(s)
+        pub = s.public_line()
+    vps.use()
+    access.authorize("laptop", pub, ssh=False, replace=True)
+    assert cli.main(["peers"]) == 0
+    out = capsys.readouterr().out
+    assert "anterior" in out and "hasta 2026-03-10T12:00:00" in out
+
+
+def wipe(node):
+    """El nodo pierde sus datos (log, base y clave) y conserva sólo la config."""
+    import shutil
+    shutil.rmtree(node.root / "data")
+    with node.store() as s:
+        node.pub = s.public_line()
+
+
+def test_restore_de_un_nodo_que_perdio_sus_datos(pair):
+    laptop, vps = pair
+    a = laptop.new("demo", "uno")
+    with laptop.store() as s:
+        edit.apply(s, a.name, body="# editado\n")
+    vps.new("demo", "del_vps")
+    run_sync(laptop, vps)
+    wipe(laptop)
+    assert laptop.names() == set()
+
+    # sin el replace en el vps, el restore no arranca
+    res, _ = run_sync_restore(laptop, vps)
+    assert isinstance(res, ProtocolError) and "--replace" in str(res)
+    vps.use()
+    access.authorize("laptop", laptop.pub, ssh=True, command=["/opt/cairn"], replace=True)
+    res, srv = run_sync_restore(laptop, vps)
+    assert res.ok and srv.ok, (res.errors, srv.errors)
+    assert laptop.names() == vps.names() == {a.name, "2026-03-10_demo_del_vps"}
+    assert laptop.body(a.name) == "# editado\n"
+    with laptop.store() as s:
+        assert len(s.config.old_keys) == 1 and docs.check(s) == []
+    # la cadena propia sigue: lo nuevo engancha con lo restaurado y el vps lo acepta
+    with laptop.store() as s:
+        edit.apply(s, a.name, body="# después del restore\n")
+    res, _ = run_sync(laptop, vps)
+    assert res.ok and res.sent == 1, res.errors
+    assert vps.body(a.name) == "# después del restore\n"
+    with vps.store() as s:
+        assert docs.check(s) == []
+    # un segundo restore ya no corresponde
+    res, _ = run_sync_restore(laptop, vps)
+    assert isinstance(res, ProtocolError) and "ya tiene eventos propios" in str(res)
+
+
+def test_sin_restore_el_log_propio_no_se_acepta(pair):
+    laptop, vps = pair
+    laptop.new("demo", "uno")
+    run_sync(laptop, vps)
+    wipe(laptop)
+    vps.use()
+    access.authorize("laptop", laptop.pub, ssh=True, command=["/opt/cairn"], replace=True)
+    res, _ = run_sync(laptop, vps)
+    assert res.ok and laptop.names() == set()        # el vps no le manda su propio log
+
+
+def run_sync_restore(cli_node, srv_node):
+    c2s_r, c2s_w = os.pipe()
+    s2c_r, s2c_w = os.pipe()
+    srv_cfg = (srv_node.use(), config.load())[1]
+    cli_cfg = (cli_node.use(), config.load())[1]
+    out = {}
+
+    def server():
+        try:
+            with Store(srv_cfg) as s, open(c2s_r, "rb") as r, open(s2c_w, "wb") as w:
+                out["srv"] = serve(s, Channel(r, w))
+        except (ProtocolError, OSError) as e:          # el cliente no llegó a hablar
+            out["srv"] = e
+
+    t = threading.Thread(target=server)
+    t.start()
+    try:
+        with Store(cli_cfg) as s, open(s2c_r, "rb") as r, open(c2s_w, "wb") as w:
+            try:
+                out["cli"] = client(s, Channel(r, w), srv_node.name, restore=True)
+            except ProtocolError as e:
+                out["cli"] = e
+                w.close()
+    finally:
+        t.join(10)
+    return out["cli"], out.get("srv")
+
+
+def test_cli_restore_y_rotate(pair, capsys):
+    laptop, vps = pair
+    laptop.use()
+    access.remote_add("vps", "ssh://cairn@host")
+    access.remote_add("otro", "ssh://cairn@otro")
+    assert cli.main(["sync", "--restore"]) == 1
+    assert "un solo remoto" in capsys.readouterr().err
+    laptop.new("demo", "x")
+    assert cli.main(["sync", "--restore", "vps"]) == 1
+    assert "ya tiene eventos propios" in capsys.readouterr().err
+    before = laptop.pub
+    assert cli.main(["key", "--rotate"]) == 0
+    out = capsys.readouterr().out
+    assert "clave nueva de laptop" in out and "authorize laptop" in out
+    assert cli.main(["key"]) == 0
+    now = capsys.readouterr().out.strip()
+    assert now != before and (laptop.root / "data" / "node_key.pub").read_text().strip() == now
+    assert not (laptop.root / "data" / "new_node_key").exists()

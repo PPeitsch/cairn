@@ -5,6 +5,7 @@
   sólo se lee, para saber si ya está.
 - Los hooks van a `settings.json` (no hay CLI para eso): se agregan, se reemplazan o se sacan
   sólo las entradas de cairn, sin tocar las demás (p. ej. el hook de wip-doc mientras conviven).
+  Con `replace_wip_doc` también saca el de wip-doc: es el paso de la migración.
 
 Es idempotente (correrlo dos veces no duplica nada) y `remove` lo deshace. Respeta
 `CLAUDE_CONFIG_DIR`, lo que permite probarlo contra una config aislada.
@@ -120,8 +121,19 @@ def _write_settings(path: Path, data: dict) -> None:
         raise
 
 
-def _strip_cairn_hooks(groups: list, spec: HookSpec) -> tuple[list, list[str]]:
-    """Saca los hooks de cairn de ese tipo. (grupos que quedan, comandos sacados)."""
+def _is_wip_doc_hook(command: str) -> bool:
+    """El hook de handoffs de wip-doc (`.../wip-doc/driver.py handoff hook`), al que reemplaza
+    el de cairn."""
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return False
+    return parts[-2:] == ["handoff", "hook"] and any(
+        Path(p).name == "driver.py" and Path(p).parent.name == "wip-doc" for p in parts[:-2])
+
+
+def _strip_hooks(groups: list, match) -> tuple[list, list[str]]:
+    """Saca los hooks cuyo comando cumple `match`. (grupos que quedan, comandos sacados)."""
     out, removed = [], []
     for g in groups:
         if not isinstance(g, dict) or not isinstance(g.get("hooks"), list):
@@ -129,7 +141,7 @@ def _strip_cairn_hooks(groups: list, spec: HookSpec) -> tuple[list, list[str]]:
             continue
         keep = []
         for h in g["hooks"]:
-            if isinstance(h, dict) and _is_cairn_hook(str(h.get("command", "")), spec):
+            if isinstance(h, dict) and match(str(h.get("command", ""))):
                 removed.append(str(h["command"]))
             else:
                 keep.append(h)
@@ -157,7 +169,7 @@ def _apply_hooks(data: dict, command: list[str], install: bool, report: Report) 
         if install and current == [want]:
             report.unchanged.append(label)
             continue
-        groups, removed = _strip_cairn_hooks(groups, spec)
+        groups, removed = _strip_hooks(groups, lambda c, spec=spec: _is_cairn_hook(c, spec))
         for r in removed:
             if not install or r != want:
                 report.actions.append(f"sacar hook {spec.event}: {r}")
@@ -178,6 +190,29 @@ def _apply_hooks(data: dict, command: list[str], install: bool, report: Report) 
         else:
             data.pop("hooks", None)
     return changed
+
+
+def _remove_wip_doc_hook(data: dict, report: Report) -> bool:
+    """Saca el hook de handoffs de wip-doc: con los dos activos, cada handoff se avisaría dos
+    veces. True si cambió algo."""
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict) or not isinstance(hooks.get("SessionStart"), list):
+        return False
+    groups, removed = _strip_hooks(hooks["SessionStart"], _is_wip_doc_hook)
+    for r in removed:
+        report.actions.append(f"sacar hook SessionStart de wip-doc: {r}")
+    if not removed:
+        return False
+    hooks = dict(hooks)
+    if groups:
+        hooks["SessionStart"] = groups
+    else:
+        hooks.pop("SessionStart")
+    if hooks:
+        data["hooks"] = hooks
+    else:
+        data.pop("hooks")
+    return True
 
 
 # ──────────────────────────────────────────────────────────────── MCP
@@ -228,13 +263,20 @@ def _apply_mcp(command: list[str], install: bool, dry_run: bool, report: Report)
 # ──────────────────────────────────────────────────────────────── entrada
 
 def claude_code(command: list[str] | None = None, remove: bool = False, dry_run: bool = False,
-                mcp: bool = True, hooks: bool = True) -> Report:
+                mcp: bool = True, hooks: bool = True, replace_wip_doc: bool = False) -> Report:
+    """`replace_wip_doc`: además saca el hook de handoffs de wip-doc (el paso de la migración en
+    el que cairn pasa a ser el que avisa). No se puede combinar con `remove`."""
+    if replace_wip_doc and (remove or not hooks):
+        raise CairnError("--replace-wip-doc instala el hook de cairn: no va con --remove ni --no-hooks")
     command = command or default_command()
     report = Report()
     if hooks:
         path = settings_path()
         data = _load_settings(path)
-        if _apply_hooks(data, command, not remove, report) and not dry_run:
+        changed = _apply_hooks(data, command, not remove, report)
+        if replace_wip_doc:
+            changed = _remove_wip_doc_hook(data, report) or changed
+        if changed and not dry_run:
             _write_settings(path, data)
     if mcp:
         _apply_mcp(command, not remove, dry_run, report)

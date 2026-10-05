@@ -5,11 +5,14 @@
     ~/.local/share/cairn/           datos: logs/, la base SQLite y la clave del nodo
 
     [node]           name
+    [node.old.<n>]   key, until: claves anteriores de este nodo (`key --rotate`, `sync --restore`)
     [data]           path
     [docs]           projects, author
     [sync]           auto = "true" | "false"   (sync en segundo plano y en los hooks; default true)
     [remotes.<n>]    url = "ssh://usuario@host[:puerto]", key (opcional), command (opcional)
     [peers.<nodo>]   key = "ssh-ed25519 AAAA…", ssh = "true" | "false", revoked = "<fecha>"
+    [peers.<nodo>.old.<n>]  key, until: claves anteriores (`authorize --replace`); cada una
+                     verifica sólo los eventos de antes de `until`
 
 Variables de entorno (sobre todo para los tests):
 
@@ -72,11 +75,19 @@ class Remote:
 
 
 @dataclass(frozen=True)
+class OldKey:
+    """Una clave que el nodo usó antes de cambiarla: verifica sólo eventos anteriores a `until`."""
+    key: str                       # `ssh-ed25519 AAAA…`
+    until: str                     # marca de tiempo (como la de los eventos) del reemplazo
+
+
+@dataclass(frozen=True)
 class Peer:
     node: str
     key: str                       # `ssh-ed25519 AAAA…`
     ssh: bool = True               # si tiene acceso por ssh a este nodo (authorized_keys)
     revoked: str | None = None
+    old: tuple[OldKey, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -89,6 +100,7 @@ class Config:
     remotes: dict[str, Remote] = field(default_factory=dict)
     peers: dict[str, Peer] = field(default_factory=dict)
     sync_auto: bool = True
+    old_keys: tuple[OldKey, ...] = ()     # las claves anteriores de este mismo nodo
 
     @property
     def logs_dir(self) -> Path:
@@ -128,6 +140,21 @@ def load_raw() -> tuple[Path, dict]:
         raise ConfigError(f"{path}: {e}") from None
 
 
+def _old_keys(t, where: str, path: Path) -> tuple[OldKey, ...]:
+    """`[<where>.old.<n>]` key, until: las claves anteriores, en el orden en que se cambiaron."""
+    if t is None:
+        return ()
+    if not isinstance(t, dict) or not all(isinstance(v, dict) and v.get("key") and v.get("until")
+                                          for v in t.values()):
+        raise ConfigError(f"{path}: [{where}.old.<n>] necesita `key` y `until`")
+    return tuple(OldKey(str(v["key"]), str(v["until"]))
+                 for _, v in sorted(t.items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0))
+
+
+def old_keys_table(old: tuple[OldKey, ...] | list[OldKey]) -> dict:
+    return {str(i): {"key": k.key, "until": k.until} for i, k in enumerate(old, 1)}
+
+
 def load() -> Config:
     path, raw = load_raw()
     node = _table(raw, "node", path).get("name", "")
@@ -148,11 +175,12 @@ def load() -> Config:
         if not NODE_RE.match(name) or not isinstance(p, dict) or not p.get("key"):
             raise ConfigError(f"{path}: [peers.{name}] inválido (nombre de nodo y `key`)")
         peers[name] = Peer(name, str(p["key"]), str(p.get("ssh", "true")) != "false",
-                           str(p["revoked"]) if p.get("revoked") else None)
+                           str(p["revoked"]) if p.get("revoked") else None,
+                           _old_keys(p.get("old"), f"peers.{name}", path))
     auto = str(_table(raw, "sync", path).get("auto", "true")) != "false"
     return Config(path=path, node=node, data_dir=_expand(data), projects=_expand(projects),
                   author=str(docs.get("author") or DEFAULT_AUTHOR), remotes=remotes, peers=peers,
-                  sync_auto=auto)
+                  sync_auto=auto, old_keys=_old_keys(_table(raw, "node", path).get("old"), "node", path))
 
 
 # ──────────────────────────────────────────────────────────────── escritura

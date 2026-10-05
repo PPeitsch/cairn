@@ -9,7 +9,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from cairn import __version__, access, clock, config, docs, edit, history, integrate, sync, transfer
+from cairn import __version__, access, clock, config, docs, edit, history, integrate, sync, transfer, tree
 from cairn.context import repo_of_path
 from cairn.markdown import first_sentences, fmt_date
 from cairn.store import CairnError, Store
@@ -154,7 +154,8 @@ def cmd_search(args) -> int:
                 print()
             return 0
         hits, total = docs.search(store, args.patron, _scopes(args.scope))
-    if not hits:
+        archivos = tree.search_files(store, args.patron, _scopes(args.scope))
+    if not hits and not archivos:
         print(f"Búsqueda \"{args.patron}\" — sin coincidencias en {total} docs")
         return 0
     print(f"Búsqueda \"{args.patron}\" — {len(hits)} doc(s) de {total}")
@@ -174,6 +175,13 @@ def cmd_search(args) -> int:
         for n, line in h.lines[:3]:
             print(f"      │ {n}: {line.strip()[:140]}")
         print()
+    if archivos:
+        print(f"━━━━━  archivos de scripts/ y validations/  ({len(archivos)})  ━━━━━\n")
+        for f in archivos:
+            print(f"  {f.path}   ·   {len(f.lines)} coincidencia(s)")
+            for n, line in f.lines[:3]:
+                print(f"      │ {n}: {line.strip()[:140]}")
+            print()
     return 0
 
 
@@ -211,7 +219,7 @@ def cmd_weekly(args) -> int:
 
 def cmd_check(args) -> int:
     with _open() as store:
-        problemas = docs.check(store)
+        problemas = docs.check(store) + tree.problems(store)
         print(f"cairn check   (nodo: {store.config.node}, datos: {store.config.data_dir})")
     for p in problemas:
         print(f"  [aviso] {p}")
@@ -397,7 +405,8 @@ def cmd_integrate(args) -> int:
     if command == []:
         raise CairnError("--command vacío")
     rep = integrate.claude_code(command, remove=args.remove, dry_run=args.dry_run,
-                                mcp=not args.no_mcp, hooks=not args.no_hooks)
+                                mcp=not args.no_mcp, hooks=not args.no_hooks,
+                                replace_wip_doc=args.replace_wip_doc)
     prefijo = "[dry-run] " if args.dry_run else ""
     for a in rep.actions:
         print(f"{prefijo}{a}")
@@ -412,6 +421,10 @@ def cmd_integrate(args) -> int:
 
 def cmd_key(args) -> int:
     with _open() as store:
+        if args.rotate:
+            for line in access.rotate_key(store):
+                print(line)
+            return 0
         print(store.public_line())
     return 0
 
@@ -421,7 +434,8 @@ def cmd_authorize(args) -> int:
     if Path(pub).expanduser().is_file():
         pub = Path(pub).expanduser().read_text(encoding="utf-8").strip()
     command = shlex.split(args.command) if args.command else None
-    for line in access.authorize(args.nodo, pub, ssh=not args.no_ssh, command=command):
+    for line in access.authorize(args.nodo, pub, ssh=not args.no_ssh, command=command,
+                                 replace=args.replace):
         print(line)
     return 0
 
@@ -440,6 +454,8 @@ def cmd_peers(args) -> int:
     for p in cfg.peers.values():
         estado = f"revocado {p.revoked}" if p.revoked else ("ssh" if p.node in con_ssh else "sólo eventos")
         print(f"{p.node:<16} {estado:<18} {p.key[:40]}…")
+        for k in p.old:
+            print(f"{'':<16} {'anterior':<18} {k.key[:40]}…  hasta {k.until[:19]}")
     return 0
 
 
@@ -468,7 +484,19 @@ def cmd_sync(args) -> int:
             if args.quiet:
                 return 0
             raise CairnError("Sin remotos: `cairn remote add <nombre> ssh://usuario@host`")
-        results = sync.sync_all(store, args.remotos, timeout=args.timeout)
+        if args.restore:
+            if len(args.remotos) != 1:
+                raise CairnError("--restore trae el log de este nodo desde un solo remoto: "
+                                 "`cairn sync --restore <remoto>`")
+            if store.log.segments(store.config.node):
+                raise CairnError(f"{store.config.node} ya tiene eventos propios: el restore es para "
+                                 "un nodo que perdió sus datos y se reinicializó")
+            remote = store.config.remotes.get(args.remotos[0])
+            if remote is None:
+                raise CairnError(f"No hay remoto: {args.remotos[0]}")
+            results = [sync.sync_remote(store, remote, timeout=args.timeout, restore=True)]
+        else:
+            results = sync.sync_all(store, args.remotos, timeout=args.timeout)
     cuando = f"{clock.now().astimezone().isoformat(timespec='seconds')} " if args.quiet else ""
     for r in results:
         if not args.quiet or not r.ok:
@@ -599,9 +627,14 @@ def build_parser() -> argparse.ArgumentParser:
                    "p. ej. \"ssh vps cairn\" para usar la base de otro nodo)")
     p.add_argument("--no-mcp", action="store_true", help="no tocar el MCP")
     p.add_argument("--no-hooks", action="store_true", help="no tocar los hooks")
+    p.add_argument("--replace-wip-doc", action="store_true",
+                   help="sacar también el hook de handoffs de wip-doc (al migrar)")
     p.set_defaults(func=cmd_integrate)
 
     p = sub.add_parser("key", help="la clave pública de este nodo (para `authorize` en el otro)")
+    p.add_argument("--rotate", action="store_true",
+                   help="cambiarla (la anterior sigue verificando lo ya firmado; los pares la "
+                        "aceptan con `authorize --replace`)")
     p.set_defaults(func=cmd_key)
 
     p = sub.add_parser("authorize", help="acepta los eventos de un nodo y le da acceso de sync por ssh")
@@ -611,6 +644,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="sólo confiar en sus eventos (no se conecta a este nodo)")
     p.add_argument("--command", help="cómo se invoca cairn acá, para authorized_keys "
                    "(default: la ruta del comando)")
+    p.add_argument("--replace", action="store_true",
+                   help="el nodo cambió de clave: la anterior queda para verificar lo que ya firmó")
     p.set_defaults(func=cmd_authorize)
 
     p = sub.add_parser("revoke", help="le saca el acceso a un nodo y rechaza sus eventos nuevos")
@@ -638,6 +673,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=float, default=60, help="segundos por remoto (default: 60)")
     p.add_argument("--background", action="store_true",
                    help="lanzarlo en segundo plano y volver (salida en <datos>/sync.log)")
+    p.add_argument("--restore", action="store_true",
+                   help="traer también el log de este nodo (perdió sus datos y se reinicializó)")
     p.set_defaults(func=cmd_sync)
 
     p = sub.add_parser("sync-peer", help="el otro lado de `sync` (lo lanza ssh, no se corre a mano)")
