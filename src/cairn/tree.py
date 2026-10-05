@@ -1,5 +1,6 @@
-"""Lo que sigue viviendo como archivos en la raíz de proyectos: `scripts/` y `validations/` de
-`_wip/`, `_done/` y `_ref/` (no son docs: cairn no los guarda), y los restos del árbol de wip-doc.
+"""Lo que sigue viviendo como archivos en la raíz de proyectos: `scripts/` y `validations/` (las
+carpetas de `[docs] file_dirs`) de `_wip/`, `_done/` y `_ref/` (no son docs: cairn no los
+guarda), y los restos del árbol de wip-doc.
 
 Después de migrar, un `.md` en la raíz de esas carpetas es un doc que no pasó por cairn (lo
 escribió alguien a mano, o quedó del import) y uno de `_wip/` adentro de un repo es la ubicación
@@ -18,9 +19,8 @@ from cairn import docs
 from cairn.store import Store
 
 CARPETAS = ("_wip", "_done", "_ref")
-SUBCARPETAS = ("scripts", "validations")
-PRUNE = {"node_modules", ".git", "venv", ".venv", "__pycache__", ".tox", ".mypy_cache", "site-packages"}
-MAX_DEPTH = 4       # las carpetas de docs vivían a lo sumo a 4 niveles (repo dentro de un paraguas)
+# las subcarpetas de archivos (`[docs] file_dirs`), lo que no se recorre (`prune`) y hasta qué
+# profundidad se buscan carpetas de docs adentro de repos (`max_depth`) salen de la config
 
 
 @dataclass
@@ -33,7 +33,7 @@ def _md_root(d: Path) -> list[Path]:
     return sorted(p for p in d.glob("*.md") if p.is_file() and p.name.lower() != "readme.md")
 
 
-def carpetas_en_repos(root: Path) -> list[Path]:
+def carpetas_en_repos(root: Path, prune=frozenset(), max_depth: int = 4) -> list[Path]:
     """Carpetas `_wip/_done/_ref` con `.md` adentro de un repo (no en la raíz de proyectos)."""
     out = []
     for dirpath, dirnames, _ in os.walk(root):
@@ -43,17 +43,19 @@ def carpetas_en_repos(root: Path) -> list[Path]:
                 c = Path(dirpath) / d
                 if any(x.name.lower() != "readme.md" for x in c.rglob("*.md")):
                     out.append(c)
-        dirnames[:] = [] if depth >= MAX_DEPTH else [
-            x for x in dirnames if x not in PRUNE and x not in CARPETAS and not x.startswith(".")]
+        dirnames[:] = [] if depth >= max_depth else [
+            x for x in dirnames if x not in prune and x not in CARPETAS and not x.startswith(".")]
     return sorted(out)
 
 
 def problems(store: Store) -> list[str]:
     """Lo que no está en orden en la raíz de proyectos. Nada si la raíz no existe (un nodo sin
     proyectos, como el VPS)."""
-    root = store.config.projects
+    cfg = store.config
+    root = cfg.projects
     if not root.is_dir():
         return []
+    subs = " o ".join(f"{d}/" for d in cfg.file_dirs) or "una subcarpeta (`[docs] file_dirs`)"
     out: list[str] = []
     for c in CARPETAS:
         d = root / c
@@ -67,13 +69,13 @@ def problems(store: Store) -> list[str]:
                 out.append(f"{c}/{p.name}: un doc fuera de cairn — `cairn import {root}` lo suma")
         for p in sorted(d.iterdir()):
             if p.is_file() and p.suffix != ".md":
-                out.append(f"{c}/{p.name} no es un doc — va en {c}/scripts/ o {c}/validations/")
-            elif p.is_dir() and p.name not in SUBCARPETAS and not p.name.startswith("."):
-                out.append(f"{c}/{p.name}/ no es scripts/ ni validations/")
-    for d in carpetas_en_repos(root):
+                out.append(f"{c}/{p.name} no es un doc — va en {c}/ + {subs}")
+            elif p.is_dir() and p.name not in cfg.file_dirs and not p.name.startswith("."):
+                out.append(f"{c}/{p.name}/ no es una carpeta de archivos ({subs})")
+    for d in carpetas_en_repos(root, frozenset(cfg.prune), cfg.max_depth):
         n = sum(1 for x in d.rglob("*.md") if x.name.lower() != "readme.md")
         out.append(f"{d.relative_to(root)}/ tiene {n} .md adentro de un repo — si son docs, "
-                   f"`cairn import {d.parent}`; si no, van en {root.name}/{d.name}/scripts/")
+                   f"`cairn import {d.parent}`; si no, van en {root.name}/{d.name}/ + {subs}")
     return out
 
 
@@ -81,15 +83,16 @@ def search_files(store: Store, pattern: str, scopes: tuple[str, ...] = docs.SCOP
     """`.md` de `scripts/` y `validations/` (notas de validación, reportes) con líneas que
     coinciden con la regex (case-insensitive)."""
     root = store.config.projects
+    prune = set(store.config.prune)
     rx = re.compile(pattern, re.I)
     hits = []
     for scope in scopes:
-        for sub in SUBCARPETAS:
+        for sub in store.config.file_dirs:
             d = root / f"_{scope}" / sub
             if not d.is_dir():
                 continue
             for p in sorted(d.rglob("*.md")):
-                if any(part in PRUNE for part in p.parts):
+                if any(part in prune for part in p.parts):
                     continue
                 text = p.read_text(encoding="utf-8", errors="replace")
                 lines = [(i + 1, ln) for i, ln in enumerate(text.splitlines()) if rx.search(ln)]

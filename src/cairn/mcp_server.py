@@ -52,7 +52,7 @@ Tipos y estructura (cairn_new crea el esqueleto; completarlo con cairn_edit)
 Archivos que no son docs
 - Scripts de validación o debug, reportes autogenerados y CSV no van a cairn: son archivos en
   `<proyectos>/_wip/scripts/` y `<proyectos>/_wip/validations/` (o los de `_done/` y `_ref/`),
-  nombrados con el área adelante (`pkynetics_changelog_borrador.md`). cairn_search también
+  nombrados con el área adelante (`api_changelog_borrador.md`). cairn_search también
   busca en los `.md` de esas carpetas y cairn_check avisa si algo quedó fuera de lugar.
 
 Nombres
@@ -121,7 +121,8 @@ def cairn_list(scope: Scope = "wip") -> str:
     handoffs = [d for d in lista if d.scope == "wip" and d.tipo == "handoff"]
     out = [_linea(d) for d in trabajo]
     if handoffs:
-        out += ["", "handoffs pendientes:", *(f"  {docs.handoff_linea(d)}" for d in handoffs)]
+        viejo = store.config.handoff_stale_days
+        out += ["", "handoffs pendientes:", *(f"  {docs.handoff_linea(d, viejo)}" for d in handoffs)]
     return "\n".join(out)
 
 
@@ -300,7 +301,9 @@ def cairn_handoff_list(all_repos: bool = False, repo: str | None = None) -> str:
     donde = r or "toda la raíz de proyectos"
     if not pend:
         return f"Sin handoffs pendientes para {donde}."
-    return "\n".join([f"Handoffs pendientes para {donde}:", *(f"  {docs.handoff_linea(d)}" for d in pend)])
+    viejo = store.config.handoff_stale_days
+    return "\n".join([f"Handoffs pendientes para {donde}:",
+                      *(f"  {docs.handoff_linea(d, viejo)}" for d in pend)])
 
 
 def cairn_handoff_take(nota: str | None = None, repo: str | None = None) -> str:
@@ -330,8 +333,22 @@ TOOLS = [
 ]
 
 
+def instructions() -> str:
+    """Las de `[mcp] instructions` si la config las define; si no, las de fábrica."""
+    try:
+        path = config.load().mcp_instructions
+    except config.ConfigError:
+        return INSTRUCTIONS
+    if path is None:
+        return INSTRUCTIONS
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise CairnError(f"[mcp] instructions: no se pudo leer {path}: {e}") from None
+
+
 def build_server() -> MCPServer:
-    server = MCPServer("cairn", instructions=INSTRUCTIONS, version=__version__)
+    server = MCPServer("cairn", instructions=instructions(), version=__version__)
     for fn, hints in TOOLS:
         server.add_tool(_tool_errors(fn), annotations=hints, structured_output=False)
     return server

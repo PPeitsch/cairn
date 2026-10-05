@@ -7,8 +7,17 @@
     [node]           name
     [node.old.<n>]   key, until: claves anteriores de este nodo (`key --rotate`, `sync --restore`)
     [data]           path
-    [docs]           projects, author
-    [sync]           auto = "true" | "false"   (sync en segundo plano y en los hooks; default true)
+    [docs]           projects, author (default: `git config user.name`, o el usuario del sistema),
+                     handoff_stale_days (default 14), templates (carpeta con plantillas propias:
+                     bug.md, infra.md, plan.md, ref.md, ref_header.md, handoff.md),
+                     file_dirs (default "scripts, validations"), prune (carpetas que no se
+                     recorren), max_depth (default 4)
+    [mcp]            instructions = archivo con las instrucciones del servidor (reemplaza las de
+                     fábrica; `cairn defaults <carpeta>` las exporta para partir de ellas)
+    [claude_code]    mcp_name (default "cairn"), start_timeout (default 30), end_timeout (10)
+    [sync]           auto = "true" | "false"   (sync en segundo plano y en los hooks; default true),
+                     timeout (segundos por remoto, default 60), hook_timeout (el pull del hook
+                     de handoffs, default 15)
     [remotes.<n>]    url = "ssh://usuario@host[:puerto]", key (opcional), command (opcional)
     [peers.<nodo>]   key = "ssh-ed25519 AAAA…", ssh = "true" | "false", revoked = "<fecha>"
     [peers.<nodo>.old.<n>]  key, until: claves anteriores (`authorize --replace`); cada una
@@ -24,9 +33,11 @@ Variables de entorno (sobre todo para los tests):
 
 from __future__ import annotations
 
+import getpass
 import os
 import re
 import socket
+import subprocess
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,7 +45,9 @@ from pathlib import Path
 from cairn.events import NODE_RE
 
 CONFIG_NAME = "config.toml"
-DEFAULT_AUTHOR = "Pablo + Claude"
+DEFAULT_FILE_DIRS = ("scripts", "validations")
+DEFAULT_PRUNE = ("node_modules", ".git", "venv", ".venv", "__pycache__", ".tox", ".mypy_cache",
+                 "site-packages")
 _HEADER = "# Configuración de cairn para este nodo. Ver `cairn --help`.\n\n"
 
 
@@ -58,6 +71,22 @@ def config_path() -> Path:
 
 def default_data_dir() -> Path:
     return _xdg("XDG_DATA_HOME", ".local/share") / "cairn"
+
+
+def default_author() -> str:
+    """Quién firma los docs si la config no lo dice: el `user.name` de git, o el usuario del
+    sistema."""
+    try:
+        out = subprocess.run(["git", "config", "--get", "user.name"], capture_output=True, text=True,
+                             timeout=5)
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        return getpass.getuser()
+    except (OSError, KeyError):
+        return "autor"
 
 
 def default_node_name() -> str:
@@ -101,6 +130,17 @@ class Config:
     peers: dict[str, Peer] = field(default_factory=dict)
     sync_auto: bool = True
     old_keys: tuple[OldKey, ...] = ()     # las claves anteriores de este mismo nodo
+    sync_timeout: float = 60
+    sync_hook_timeout: float = 15
+    handoff_stale_days: int = 14
+    templates_dir: Path | None = None
+    file_dirs: tuple[str, ...] = DEFAULT_FILE_DIRS
+    prune: tuple[str, ...] = DEFAULT_PRUNE
+    max_depth: int = 4
+    mcp_instructions: Path | None = None
+    mcp_name: str = "cairn"
+    start_timeout: int = 30
+    end_timeout: int = 10
 
     @property
     def logs_dir(self) -> Path:
@@ -155,6 +195,28 @@ def old_keys_table(old: tuple[OldKey, ...] | list[OldKey]) -> dict:
     return {str(i): {"key": k.key, "until": k.until} for i, k in enumerate(old, 1)}
 
 
+def _num(t: dict, key: str, default, kind, where: str, path: Path):
+    v = t.get(key)
+    if v is None or v == "":
+        return default
+    try:
+        n = kind(v)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{path}: [{where}] {key} tiene que ser un número: {v!r}") from None
+    if n <= 0:
+        raise ConfigError(f"{path}: [{where}] {key} tiene que ser mayor que 0: {v!r}")
+    return n
+
+
+def _names(t: dict, key: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Una lista como texto separado por comas (la config sólo guarda strings) o como lista."""
+    v = t.get(key)
+    if v is None:
+        return default
+    items = v if isinstance(v, list) else str(v).split(",")
+    return tuple(x.strip() for x in map(str, items) if x.strip())
+
+
 def load() -> Config:
     path, raw = load_raw()
     node = _table(raw, "node", path).get("name", "")
@@ -177,10 +239,29 @@ def load() -> Config:
         peers[name] = Peer(name, str(p["key"]), str(p.get("ssh", "true")) != "false",
                            str(p["revoked"]) if p.get("revoked") else None,
                            _old_keys(p.get("old"), f"peers.{name}", path))
-    auto = str(_table(raw, "sync", path).get("auto", "true")) != "false"
-    return Config(path=path, node=node, data_dir=_expand(data), projects=_expand(projects),
-                  author=str(docs.get("author") or DEFAULT_AUTHOR), remotes=remotes, peers=peers,
-                  sync_auto=auto, old_keys=_old_keys(_table(raw, "node", path).get("old"), "node", path))
+    sync = _table(raw, "sync", path)
+    mcp = _table(raw, "mcp", path)
+    cc = _table(raw, "claude_code", path)
+    auto = str(sync.get("auto", "true")) != "false"
+    mcp_name = str(cc.get("mcp_name") or "cairn")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", mcp_name):
+        raise ConfigError(f"{path}: [claude_code] mcp_name inválido: {mcp_name!r}")
+    return Config(
+        path=path, node=node, data_dir=_expand(data), projects=_expand(projects),
+        author=str(docs.get("author") or default_author()), remotes=remotes, peers=peers,
+        sync_auto=auto, old_keys=_old_keys(_table(raw, "node", path).get("old"), "node", path),
+        sync_timeout=_num(sync, "timeout", 60.0, float, "sync", path),
+        sync_hook_timeout=_num(sync, "hook_timeout", 15.0, float, "sync", path),
+        handoff_stale_days=_num(docs, "handoff_stale_days", 14, int, "docs", path),
+        templates_dir=_expand(docs["templates"]) if docs.get("templates") else None,
+        file_dirs=_names(docs, "file_dirs", DEFAULT_FILE_DIRS),
+        prune=_names(docs, "prune", DEFAULT_PRUNE),
+        max_depth=_num(docs, "max_depth", 4, int, "docs", path),
+        mcp_instructions=_expand(mcp["instructions"]) if mcp.get("instructions") else None,
+        mcp_name=mcp_name,
+        start_timeout=_num(cc, "start_timeout", 30, int, "claude_code", path),
+        end_timeout=_num(cc, "end_timeout", 10, int, "claude_code", path),
+    )
 
 
 # ──────────────────────────────────────────────────────────────── escritura
@@ -226,11 +307,17 @@ def save_raw(raw: dict) -> Path:
 
 
 def update(fn) -> Config:
-    """Carga la config cruda, la deja modificar a `fn(raw)` y la guarda."""
-    _, raw = load_raw()
+    """Carga la config cruda, la deja modificar a `fn(raw)` y la guarda. Si lo que queda no es
+    una config válida, vuelve a la anterior y lo dice."""
+    path, raw = load_raw()
+    before = path.read_text(encoding="utf-8")
     fn(raw)
     save_raw(raw)
-    return load()
+    try:
+        return load()
+    except ConfigError:
+        path.write_text(before, encoding="utf-8")
+        raise
 
 
 def write(node: str, data_dir: str | None = None, projects: str | None = None,
@@ -240,5 +327,5 @@ def write(node: str, data_dir: str | None = None, projects: str | None = None,
     return save_raw({
         "node": {"name": node},
         "data": {"path": data_dir or str(default_data_dir())},
-        "docs": {"projects": projects or "~/projects", "author": author or DEFAULT_AUTHOR},
+        "docs": {"projects": projects or "~/projects", "author": author or default_author()},
     })

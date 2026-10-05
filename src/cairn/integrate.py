@@ -25,8 +25,9 @@ from pathlib import Path
 
 from cairn.store import CairnError
 
-MCP_NAME = "cairn"
-HOOK_TIMEOUT = 10
+MCP_NAME = "cairn"          # default de `[claude_code] mcp_name`
+HOOK_TIMEOUT = 10           # default de `[claude_code] end_timeout`
+START_TIMEOUT = 30          # default de `[claude_code] start_timeout`
 
 
 @dataclass(frozen=True)
@@ -40,9 +41,31 @@ class HookSpec:
 # Los hooks que cairn registra. El de handoffs trae primero lo de los remotos (si hay) y por eso
 # tiene más tiempo; al cerrar la sesión se empuja en segundo plano, sin demorar la salida.
 HOOKS = (
-    HookSpec("SessionStart", "startup|clear", ("handoff", "hook"), timeout=30),
+    HookSpec("SessionStart", "startup|clear", ("handoff", "hook"), timeout=START_TIMEOUT),
     HookSpec("SessionEnd", None, ("sync", "--background")),
 )
+
+
+@dataclass(frozen=True)
+class Settings:
+    """Lo configurable de la integración (`[claude_code]`): el nombre del MCP y cuánto le da
+    Claude Code a cada hook antes de cortarlo."""
+    mcp_name: str = MCP_NAME
+    start_timeout: int = START_TIMEOUT
+    end_timeout: int = HOOK_TIMEOUT
+
+    @classmethod
+    def from_config(cls) -> Settings:
+        from cairn import config
+        try:
+            cfg = config.load()
+        except config.ConfigError:
+            return cls()
+        return cls(cfg.mcp_name, cfg.start_timeout, cfg.end_timeout)
+
+    def hooks(self) -> tuple[HookSpec, ...]:
+        timeouts = {"SessionStart": self.start_timeout, "SessionEnd": self.end_timeout}
+        return tuple(HookSpec(h.event, h.matcher, h.args, timeouts[h.event]) for h in HOOKS)
 
 
 @dataclass
@@ -150,23 +173,24 @@ def _strip_hooks(groups: list, match) -> tuple[list, list[str]]:
     return out, removed
 
 
-def _apply_hooks(data: dict, command: list[str], install: bool, report: Report) -> bool:
+def _apply_hooks(data: dict, command: list[str], install: bool, report: Report,
+                 specs: tuple[HookSpec, ...] = HOOKS) -> bool:
     """Deja `data` con los hooks de cairn instalados (o sin ellos). True si cambió algo."""
     hooks = data.get("hooks")
     if hooks is not None and not isinstance(hooks, dict):
         raise CairnError("settings.json: `hooks` no es un objeto: no se tocó nada")
     hooks = dict(hooks or {})
     changed = False
-    for spec in HOOKS:
+    for spec in specs:
         groups = hooks.get(spec.event) or []
         if not isinstance(groups, list):
             raise CairnError(f"settings.json: `hooks.{spec.event}` no es una lista: no se tocó nada")
         want = shlex.join([*command, *spec.args])
-        current = [str(h.get("command")) for g in groups if isinstance(g, dict)
+        current = [(str(h.get("command")), h.get("timeout")) for g in groups if isinstance(g, dict)
                    for h in (g.get("hooks") or []) if isinstance(h, dict)
                    and _is_cairn_hook(str(h.get("command", "")), spec)]
         label = f"hook {spec.event}: {want}"
-        if install and current == [want]:
+        if install and current == [(want, spec.timeout)]:
             report.unchanged.append(label)
             continue
         groups, removed = _strip_hooks(groups, lambda c, spec=spec: _is_cairn_hook(c, spec))
@@ -217,14 +241,14 @@ def _remove_wip_doc_hook(data: dict, report: Report) -> bool:
 
 # ──────────────────────────────────────────────────────────────── MCP
 
-def registered_mcp() -> dict | None:
+def registered_mcp(name: str = MCP_NAME) -> dict | None:
     path = user_config_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     servers = data.get("mcpServers") if isinstance(data, dict) else None
-    entry = servers.get(MCP_NAME) if isinstance(servers, dict) else None
+    entry = servers.get(name) if isinstance(servers, dict) else None
     return entry if isinstance(entry, dict) else None
 
 
@@ -242,42 +266,45 @@ def _run_claude(*args: str) -> None:
         raise CairnError(f"`claude {' '.join(args)}` falló ({r.returncode}): {msg}")
 
 
-def _apply_mcp(command: list[str], install: bool, dry_run: bool, report: Report) -> None:
-    cur = registered_mcp()
+def _apply_mcp(command: list[str], install: bool, dry_run: bool, report: Report,
+               name: str = MCP_NAME) -> None:
+    cur = registered_mcp(name)
     want = {"command": command[0], "args": [*command[1:], "mcp"]}
-    label = f"MCP {MCP_NAME} (scope user): {shlex.join([*command, 'mcp'])}"
+    label = f"MCP {name} (scope user): {shlex.join([*command, 'mcp'])}"
     if install and cur is not None and cur.get("command") == want["command"] \
             and list(cur.get("args") or []) == want["args"]:
         report.unchanged.append(label)
         return
     if cur is not None:
-        report.actions.append(f"sacar MCP {MCP_NAME} (scope user)")
+        report.actions.append(f"sacar MCP {name} (scope user)")
         if not dry_run:
-            _run_claude("mcp", "remove", "--scope", "user", MCP_NAME)
+            _run_claude("mcp", "remove", "--scope", "user", name)
     if install:
         report.actions.append(f"agregar {label}")
         if not dry_run:
-            _run_claude("mcp", "add", "--scope", "user", MCP_NAME, "--", *command, "mcp")
+            _run_claude("mcp", "add", "--scope", "user", name, "--", *command, "mcp")
 
 
 # ──────────────────────────────────────────────────────────────── entrada
 
 def claude_code(command: list[str] | None = None, remove: bool = False, dry_run: bool = False,
-                mcp: bool = True, hooks: bool = True, replace_wip_doc: bool = False) -> Report:
+                mcp: bool = True, hooks: bool = True, replace_wip_doc: bool = False,
+                settings: Settings | None = None) -> Report:
     """`replace_wip_doc`: además saca el hook de handoffs de wip-doc (el paso de la migración en
     el que cairn pasa a ser el que avisa). No se puede combinar con `remove`."""
     if replace_wip_doc and (remove or not hooks):
         raise CairnError("--replace-wip-doc instala el hook de cairn: no va con --remove ni --no-hooks")
     command = command or default_command()
+    settings = settings or Settings.from_config()
     report = Report()
     if hooks:
         path = settings_path()
         data = _load_settings(path)
-        changed = _apply_hooks(data, command, not remove, report)
+        changed = _apply_hooks(data, command, not remove, report, settings.hooks())
         if replace_wip_doc:
             changed = _remove_wip_doc_hook(data, report) or changed
         if changed and not dry_run:
             _write_settings(path, data)
     if mcp:
-        _apply_mcp(command, not remove, dry_run, report)
+        _apply_mcp(command, not remove, dry_run, report, settings.mcp_name)
     return report

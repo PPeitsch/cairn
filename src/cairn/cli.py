@@ -14,8 +14,6 @@ from cairn.context import repo_of_path
 from cairn.markdown import first_sentences, fmt_date
 from cairn.store import CairnError, Store
 
-SYNC_HOOK_TIMEOUT = 15
-
 
 def _open() -> Store:
     return Store(config.load())
@@ -267,7 +265,7 @@ def cmd_handoff_list(args) -> int:
         return 0
     print(f"Handoffs pendientes para {donde}:")
     for d in pend:
-        print(f"  {docs.handoff_linea(d)}")
+        print(f"  {docs.handoff_linea(d, store.config.handoff_stale_days)}")
     return 0
 
 
@@ -285,7 +283,7 @@ def cmd_handoff_hook(args) -> int:
         with _open() as store:
             if sync.auto_enabled(store.config):
                 # traer lo que dejó otra máquina antes de mirar (callado: si falla, sigue local)
-                sync.sync_all(store, timeout=SYNC_HOOK_TIMEOUT)
+                sync.sync_all(store, timeout=store.config.sync_hook_timeout)
             repo = repo_of_path(Path(data.get("cwd") or os.getcwd()), store.config.projects)
             texto = docs.handoff_hook_context(store, repo)
         if texto:
@@ -393,6 +391,25 @@ def cmd_export(args) -> int:
 
 # ──────────────────────────────────────────────────────────────── mcp
 
+def cmd_defaults(args) -> int:
+    from cairn import mcp_server, templates
+    dest = Path(args.carpeta).expanduser()
+    dest.mkdir(parents=True, exist_ok=True)
+    files = {**{f"templates/{k}": v.lstrip("\n") for k, v in templates.defaults().items()},
+             "mcp_instructions.md": mcp_server.INSTRUCTIONS}
+    for rel, text in files.items():
+        p = dest / rel
+        if p.exists() and not args.force:
+            warn(f"ya existe, no se pisa: {p} (--force)")
+            continue
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+        print(p)
+    print(f"\nPara usarlas, en la config:\n  [docs]\n  templates = \"{dest / 'templates'}\"\n"
+          f"  [mcp]\n  instructions = \"{dest / 'mcp_instructions.md'}\"")
+    return 0
+
+
 def cmd_mcp(args) -> int:
     config.load()       # sin `init`, avisar acá y no al primer llamado de una tool
     from cairn import mcp_server  # sólo este comando carga `mcp`
@@ -484,6 +501,7 @@ def cmd_sync(args) -> int:
             if args.quiet:
                 return 0
             raise CairnError("Sin remotos: `cairn remote add <nombre> ssh://usuario@host`")
+        timeout = args.timeout or store.config.sync_timeout
         if args.restore:
             if len(args.remotos) != 1:
                 raise CairnError("--restore trae el log de este nodo desde un solo remoto: "
@@ -494,9 +512,9 @@ def cmd_sync(args) -> int:
             remote = store.config.remotes.get(args.remotos[0])
             if remote is None:
                 raise CairnError(f"No hay remoto: {args.remotos[0]}")
-            results = [sync.sync_remote(store, remote, timeout=args.timeout, restore=True)]
+            results = [sync.sync_remote(store, remote, timeout=timeout, restore=True)]
         else:
-            results = sync.sync_all(store, args.remotos, timeout=args.timeout)
+            results = sync.sync_all(store, args.remotos, timeout=timeout)
     cuando = f"{clock.now().astimezone().isoformat(timespec='seconds')} " if args.quiet else ""
     for r in results:
         if not args.quiet or not r.ok:
@@ -526,7 +544,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--node", help="nombre del nodo (default: el hostname)")
     p.add_argument("--data", help="carpeta de datos (default: ~/.local/share/cairn)")
     p.add_argument("--projects", help="raíz de los proyectos (default: ~/projects)")
-    p.add_argument("--author", help=f"autor de los docs (default: {config.DEFAULT_AUTHOR})")
+    p.add_argument("--author", help="autor de los docs (default: `git config user.name`, o el usuario)")
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("new", help="crea un doc: diagnóstico (bug/infra), plan o referencia")
@@ -616,6 +634,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("rebuild", help="rehace la proyección SQLite desde el log de eventos")
     p.set_defaults(func=cmd_rebuild)
 
+    p = sub.add_parser("defaults", help="exporta las plantillas y las instrucciones del MCP de fábrica "
+                       "a una carpeta, para personalizarlas")
+    p.add_argument("carpeta")
+    p.add_argument("-f", "--force", action="store_true", help="pisar archivos que ya existan")
+    p.set_defaults(func=cmd_defaults)
+
     p = sub.add_parser("mcp", help="servidor MCP por stdio (lo lanza el agente, no se corre a mano)")
     p.set_defaults(func=cmd_mcp)
 
@@ -670,7 +694,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("sync", help="intercambia eventos con los remotos")
     p.add_argument("remotos", nargs="*", help="default: todos")
     p.add_argument("--quiet", action="store_true", help="sólo errores")
-    p.add_argument("--timeout", type=float, default=60, help="segundos por remoto (default: 60)")
+    p.add_argument("--timeout", type=float, help="segundos por remoto (default: `[sync] timeout`, 60)")
     p.add_argument("--background", action="store_true",
                    help="lanzarlo en segundo plano y volver (salida en <datos>/sync.log)")
     p.add_argument("--restore", action="store_true",

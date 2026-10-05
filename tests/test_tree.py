@@ -39,7 +39,7 @@ def test_restos_de_wip_doc(store, env, capsys):
     assert any(f"_wip/{name}.md: el doc ya está en cairn" in x for x in p)
     assert any("_wip/2026-03-09_api_suelto.md: un doc fuera de cairn" in x for x in p)
     assert any("_wip/datos.csv no es un doc" in x for x in p)
-    assert any("_done/viejo/ no es scripts/" in x for x in p)
+    assert any("_done/viejo/ no es una carpeta de archivos (scripts/ o validations/)" in x for x in p)
     assert any(x.startswith("api/_wip/ tiene 1 .md adentro de un repo") for x in p)
     assert len(p) == 5, p          # ni el README, ni scripts/, ni node_modules
 
