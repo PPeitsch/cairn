@@ -469,10 +469,12 @@ def cmd_sync(args) -> int:
                 return 0
             raise CairnError("Sin remotos: `cairn remote add <nombre> ssh://usuario@host`")
         results = sync.sync_all(store, args.remotos, timeout=args.timeout)
+    cuando = f"{clock.now().astimezone().isoformat(timespec='seconds')} " if args.quiet else ""
     for r in results:
         if not args.quiet or not r.ok:
-            print(f"{r.remote} ({r.peer or '?'}): {r.sent} enviado(s), {r.received} recibido(s)"
+            print(f"{cuando}{r.remote} ({r.peer or '?'}): {r.sent} enviado(s), {r.received} recibido(s)"
                   + ("" if r.ok else f", {len(r.errors)} error(es)"))
+        sys.stdout.flush()
         for e in r.errors:
             warn(f"  [error] {e}")
     return 0 if all(r.ok for r in results) else 1

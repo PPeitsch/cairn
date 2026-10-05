@@ -297,7 +297,9 @@ def sync_remote(store: Store, remote: config.Remote, timeout: float | None = Non
     if killed.is_set():
         res.errors = [f"se cortó por tiempo ({timeout}s)"]
     elif res.errors and err:
-        res.errors.append(f"ssh: {err.splitlines()[-1]}")
+        # si ssh no pudo conectar, su mensaje dice más que "el otro lado cortó"
+        res.errors = [e for e in res.errors if "cortó la conexión" not in e]
+        res.errors.append(err.splitlines()[-1])
     return res
 
 
