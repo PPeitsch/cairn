@@ -421,6 +421,10 @@ def cmd_integrate(args) -> int:
 
 def cmd_key(args) -> int:
     with _open() as store:
+        if args.rotate:
+            for line in access.rotate_key(store):
+                print(line)
+            return 0
         print(store.public_line())
     return 0
 
@@ -430,7 +434,8 @@ def cmd_authorize(args) -> int:
     if Path(pub).expanduser().is_file():
         pub = Path(pub).expanduser().read_text(encoding="utf-8").strip()
     command = shlex.split(args.command) if args.command else None
-    for line in access.authorize(args.nodo, pub, ssh=not args.no_ssh, command=command):
+    for line in access.authorize(args.nodo, pub, ssh=not args.no_ssh, command=command,
+                                 replace=args.replace):
         print(line)
     return 0
 
@@ -449,6 +454,8 @@ def cmd_peers(args) -> int:
     for p in cfg.peers.values():
         estado = f"revocado {p.revoked}" if p.revoked else ("ssh" if p.node in con_ssh else "sólo eventos")
         print(f"{p.node:<16} {estado:<18} {p.key[:40]}…")
+        for k in p.old:
+            print(f"{'':<16} {'anterior':<18} {k.key[:40]}…  hasta {k.until[:19]}")
     return 0
 
 
@@ -477,7 +484,19 @@ def cmd_sync(args) -> int:
             if args.quiet:
                 return 0
             raise CairnError("Sin remotos: `cairn remote add <nombre> ssh://usuario@host`")
-        results = sync.sync_all(store, args.remotos, timeout=args.timeout)
+        if args.restore:
+            if len(args.remotos) != 1:
+                raise CairnError("--restore trae el log de este nodo desde un solo remoto: "
+                                 "`cairn sync --restore <remoto>`")
+            if store.log.segments(store.config.node):
+                raise CairnError(f"{store.config.node} ya tiene eventos propios: el restore es para "
+                                 "un nodo que perdió sus datos y se reinicializó")
+            remote = store.config.remotes.get(args.remotos[0])
+            if remote is None:
+                raise CairnError(f"No hay remoto: {args.remotos[0]}")
+            results = [sync.sync_remote(store, remote, timeout=args.timeout, restore=True)]
+        else:
+            results = sync.sync_all(store, args.remotos, timeout=args.timeout)
     cuando = f"{clock.now().astimezone().isoformat(timespec='seconds')} " if args.quiet else ""
     for r in results:
         if not args.quiet or not r.ok:
@@ -613,6 +632,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_integrate)
 
     p = sub.add_parser("key", help="la clave pública de este nodo (para `authorize` en el otro)")
+    p.add_argument("--rotate", action="store_true",
+                   help="cambiarla (la anterior sigue verificando lo ya firmado; los pares la "
+                        "aceptan con `authorize --replace`)")
     p.set_defaults(func=cmd_key)
 
     p = sub.add_parser("authorize", help="acepta los eventos de un nodo y le da acceso de sync por ssh")
@@ -622,6 +644,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="sólo confiar en sus eventos (no se conecta a este nodo)")
     p.add_argument("--command", help="cómo se invoca cairn acá, para authorized_keys "
                    "(default: la ruta del comando)")
+    p.add_argument("--replace", action="store_true",
+                   help="el nodo cambió de clave: la anterior queda para verificar lo que ya firmó")
     p.set_defaults(func=cmd_authorize)
 
     p = sub.add_parser("revoke", help="le saca el acceso a un nodo y rechaza sus eventos nuevos")
@@ -649,6 +673,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=float, default=60, help="segundos por remoto (default: 60)")
     p.add_argument("--background", action="store_true",
                    help="lanzarlo en segundo plano y volver (salida en <datos>/sync.log)")
+    p.add_argument("--restore", action="store_true",
+                   help="traer también el log de este nodo (perdió sus datos y se reinicializó)")
     p.set_defaults(func=cmd_sync)
 
     p = sub.add_parser("sync-peer", help="el otro lado de `sync` (lo lanza ssh, no se corre a mano)")

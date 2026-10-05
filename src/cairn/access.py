@@ -8,6 +8,8 @@
   `restrict` saca pty, forwarding y todo lo demás; `--as` fija la identidad del que entra, así
   no puede hacerse pasar por otro nodo. Un nodo que nunca se conecta acá (sus eventos llegan a
   través de otro) se autoriza con `--no-ssh`: sólo la confianza en su clave.
+- `authorize --replace`: el nodo cambió de clave; la anterior queda en `[peers.<nodo>.old]` y
+  verifica sólo lo firmado antes del cambio. `key --rotate` es el cambio del lado del nodo.
 - `revoke <nodo>`: le saca el acceso por ssh y deja de aceptar eventos nuevos suyos (los que ya
   están siguen valiendo: se verifican con la clave, que queda marcada como revocada).
 - `remote add|remove`: los nodos con los que este sincroniza (`cairn sync`).
@@ -81,8 +83,11 @@ def _check_node(node: str, own: str) -> None:
         raise CairnError(f"{node} es este mismo nodo")
 
 
-def authorize(node: str, pub: str, ssh: bool = True, command: list[str] | None = None) -> list[str]:
-    """Devuelve lo que hizo."""
+def authorize(node: str, pub: str, ssh: bool = True, command: list[str] | None = None,
+              replace: bool = False) -> list[str]:
+    """Devuelve lo que hizo. Si el nodo ya tenía otra clave, `replace` la pasa a sus claves
+    anteriores: sigue verificando lo que firmó hasta ahora y nada posterior. Si estaba revocado,
+    la vieja queda igual, pero sólo para lo anterior a la revocación."""
     cfg = config.load()
     _check_node(node, cfg.node)
     try:
@@ -91,16 +96,24 @@ def authorize(node: str, pub: str, ssh: bool = True, command: list[str] | None =
         raise CairnError(str(e)) from None
     done = []
     prev = cfg.peers.get(node)
-    if prev and prev.key != key and not prev.revoked:
-        # otra clave para el mismo nodo: la vieja deja de valer para lo nuevo, pero lo ya
-        # escrito con ella no se puede volver a verificar: que sea explícito
-        raise CairnError(f"{node} ya está autorizado con otra clave. Si la cambió, primero "
-                         f"`cairn revoke {node}` (sus eventos viejos dejan de verificarse).")
+    old = list(prev.old) if prev else []
+    if prev and prev.key != key:
+        if not prev.revoked and not replace:
+            raise CairnError(f"{node} ya está autorizado con otra clave. Si la cambió (`cairn key "
+                             f"--rotate`, o se reinstaló), `cairn authorize {node} <clave> --replace`: "
+                             "la anterior sigue verificando lo que ya firmó.")
+        # revocado: `revoked` es una fecha; vale lo firmado hasta el final de ese día
+        until = f"{prev.revoked}T23:59:59.999999+00:00" if prev.revoked else clock.timestamp()
+        old.append(config.OldKey(prev.key, until))
+        done.append(f"la clave anterior de {node} verifica sólo lo de antes de {until[:19]}")
 
     def mutate(raw):
-        raw.setdefault("peers", {})[node] = {"key": key, "ssh": "true" if ssh else "false"}
+        entry = {"key": key, "ssh": "true" if ssh else "false"}
+        if old:
+            entry["old"] = config.old_keys_table(old)
+        raw.setdefault("peers", {})[node] = entry
     config.update(mutate)
-    done.append(f"confianza en la clave de {node}: {key[:32]}…")
+    done.insert(0, f"confianza en la clave de {node}: {key[:32]}…")
     if ssh:
         from cairn.integrate import default_command
         line = authorized_line(command or default_command(), node, key)
@@ -115,6 +128,35 @@ def authorize(node: str, pub: str, ssh: bool = True, command: list[str] | None =
         if _rewrite_authorized_keys(lambda lines: [ln for ln in lines if not _is_cairn_line(ln, node)]):
             done.append(f"sacado el acceso por ssh de {node}")
     return done
+
+
+def rotate_key(store) -> list[str]:
+    """Cambia la clave de este nodo (la de firmar y la de ssh). La anterior pasa a
+    `[node.old]`: lo ya firmado con ella sigue valiendo acá. Los pares tienen que aceptar la
+    nueva con `authorize <nodo> <clave> --replace`; hasta entonces rechazan lo que firme."""
+    cfg = store.config
+    old_line = store.public_line()
+    until = clock.timestamp()
+    path = cfg.key_path
+    tmp = path.with_name("new_" + path.name)       # su .pub: new_node_key.pub
+    tmp.unlink(missing_ok=True)
+    tmp.with_suffix(".pub").unlink(missing_ok=True)
+    with store._lock():
+        new = keys.generate(tmp, cfg.node)
+
+        def mutate(raw):
+            node = raw.setdefault("node", {})
+            node["old"] = config.old_keys_table([*cfg.old_keys, config.OldKey(old_line, until)])
+        config.update(mutate)
+        os.replace(tmp.with_suffix(".pub"), path.with_suffix(".pub"))
+        os.replace(tmp, path)
+        store.config = config.load()
+        store.key = new
+        store.verifier = type(store.verifier)(store.config, new.public_key())
+    line = keys.public_line(new.public_key(), cfg.node)
+    return [f"clave nueva de {cfg.node}: {line}",
+            f"la anterior queda en [node.old] para lo firmado hasta {until[:19]}",
+            f"en cada nodo que confía en este: `cairn authorize {cfg.node} '{line}' --replace`"]
 
 
 def revoke(node: str) -> list[str]:

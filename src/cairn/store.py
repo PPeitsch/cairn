@@ -55,29 +55,46 @@ def new_doc_id() -> str:
 
 
 class Verifier:
-    """Qué nodos se conocen y con qué clave: la propia y las de los pares autorizados. Un par
-    revocado conserva su clave para verificar lo que ya escribió (el sync rechaza lo nuevo)."""
+    """Qué nodos se conocen y con qué claves: la propia y las de los pares autorizados. Un par
+    revocado conserva su clave para verificar lo que ya escribió (el sync rechaza lo nuevo). Una
+    clave anterior (`[...old.<n>]`) verifica sólo los eventos de antes de su reemplazo."""
 
     def __init__(self, config: Config, own: keys.Ed25519PublicKey):
         self.node = config.node
-        self.keys = {config.node: own}
+        # nodo → [(clave, hasta)]: la vigente con `hasta` None
+        self.keys: dict[str, list[tuple[keys.Ed25519PublicKey, str | None]]] = {
+            config.node: [(own, None)]}
         self.bad_peers: list[str] = []
+        self._add_old(config.node, config.old_keys, "node")
         for name, peer in config.peers.items():
             if name == config.node:
                 continue
             try:
-                self.keys[name] = keys.parse_public(peer.key)
+                self.keys[name] = [(keys.parse_public(peer.key), None)]
             except keys.KeyFileError as e:
                 self.bad_peers.append(f"[peers.{name}]: {e}")
+                continue
+            self._add_old(name, peer.old, f"peers.{name}")
+
+    def _add_old(self, node: str, old, where: str) -> None:
+        for k in old:
+            try:
+                self.keys[node].append((keys.parse_public(k.key), k.until))
+            except keys.KeyFileError as e:
+                self.bad_peers.append(f"[{where}.old]: {e}")
 
     def problem(self, ev: Event) -> str | None:
         """Por qué no se acepta el evento, o None si la firma es válida."""
-        pub = self.keys.get(ev.node)
-        if pub is None:
+        cands = self.keys.get(ev.node)
+        if cands is None:
             return f"evento {ev.id[:12]} de un nodo no autorizado ({ev.node}): `cairn authorize`"
-        if not keys.verify(pub, ev.id, ev.sig):
-            return f"evento {ev.id[:12]} de {ev.node} con firma inválida o sin firma"
-        return None
+        for pub, until in cands:
+            if keys.verify(pub, ev.id, ev.sig):
+                if until is not None and ev.ts > until:
+                    return (f"evento {ev.id[:12]} de {ev.node} firmado con una clave que se "
+                            f"reemplazó el {until[:10]}, con fecha posterior")
+                return None
+        return f"evento {ev.id[:12]} de {ev.node} con firma inválida o sin firma"
 
 
 class Store:

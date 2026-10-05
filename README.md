@@ -101,12 +101,35 @@ avisar, al cerrar la sesión se empuja en segundo plano, y lo mismo después de 
 doc y de crear o tomar un handoff (salida en `<datos>/sync.log`). `[sync] auto = "false"` en la
 config lo apaga.
 
+**Cambio de clave.** `cairn key --rotate` genera una clave nueva; la anterior queda en la config
+(`[node.old]`) y sigue verificando lo que ya firmó. En cada nodo que confía en este,
+`cairn authorize <nodo> "<clave nueva>" --replace`: la vieja pasa a `[peers.<nodo>.old]` y sólo
+verifica eventos de antes del cambio. Reautorizar un nodo revocado con otra clave conserva la
+vieja para lo firmado hasta el día de la revocación.
+
+**Restore de un nodo que perdió sus datos.** Se reinicializa con el mismo nombre (clave nueva),
+se acepta esa clave en un par y se le pide el log propio:
+
+```bash
+laptop$ cairn init --node laptop && cairn key       # copiar la línea
+vps$    cairn authorize laptop "ssh-ed25519 AAAA… cairn:laptop" --replace
+laptop$ cairn authorize vps "ssh-ed25519 AAAA… cairn:vps" --no-ssh   # y el resto de los nodos
+laptop$ cairn remote add vps ssh://cairn@vps.example
+laptop$ cairn sync --restore vps
+```
+
+El restore sólo corre en un nodo sin eventos propios, y sólo si la clave vigente que el par
+tiene registrada para él es la suya. Las claves anteriores las toma de ese par: si el par
+estuviera comprometido podría fabricar historia vieja a nombre del nodo, así que conviene
+comparar `cairn peers` del par con el de otro nodo antes de restaurar.
+
 ### Agentes (MCP)
 
 ```bash
 cairn integrate claude-code [--dry-run]     # registra el MCP (scope user) y el hook SessionStart
 cairn integrate claude-code --remove        # lo deshace
 cairn integrate claude-code --command "ssh vps cairn"   # usar la base de otro nodo por ssh
+cairn integrate claude-code --replace-wip-doc           # al migrar: saca también el hook de wip-doc
 ```
 
 `integrate` registra el MCP con `claude mcp add --scope user` y agrega a `settings.json` sólo las
@@ -117,6 +140,11 @@ entradas de cairn (no toca los demás hooks). Es idempotente y respeta `CLAUDE_C
 (`cairn_list`, `cairn_search`, `cairn_show`, `cairn_weekly`, `cairn_check`, `cairn_log`,
 `cairn_diff`) y los handoffs (`cairn_handoff_new|list|take|drop`). Sus instrucciones llevan las
 convenciones de cuándo y cómo documentar.
+
+`check` y `search` miran también la raíz de proyectos: `check` avisa de un `.md` suelto en
+`_wip/`, `_done/` o `_ref/` (un doc que no pasó por cairn, o un resto de wip-doc ya importado),
+de archivos fuera de `scripts/` y `validations/` y de carpetas `_wip/` adentro de un repo; `search`
+busca además en los `.md` de `scripts/` y `validations/`, que siguen siendo archivos.
 
 Un doc se nombra por su nombre (`2026-10-04_cairn_arquitectura`, con o sin `.md`) o por un
 prefijo de su id. No hay carpetas: si un doc está abierto, cerrado o es referencia lo dicen su
