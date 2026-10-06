@@ -31,6 +31,29 @@ sincronizan por ssh, al estilo git, y los agentes acceden por MCP stdio.
 
 Los datos nunca van en este repo: cada nodo tiene los suyos y el sync los iguala.
 
+## Configuración
+
+Todo lo que es preferencia vive en `config.toml` (los valores van como texto). Nada de esto
+cambia el formato de los eventos, así que dos nodos pueden tener configs distintas.
+
+| Tabla | Clave | Default | Qué |
+|---|---|---|---|
+| `[docs]` | `projects` | `~/projects` | raíz de los proyectos (el `repo:` de cada doc sale de acá) |
+| | `author` | `git config user.name`, o el usuario | autor de los docs nuevos |
+| | `templates` | (las de fábrica) | carpeta con `bug.md`, `infra.md`, `plan.md`, `ref.md`, `ref_header.md`, `handoff.md`; `{titulo}` se reemplaza |
+| | `handoff_stale_days` | `14` | desde cuántos días un handoff pendiente se marca como viejo |
+| | `file_dirs` | `scripts, validations` | subcarpetas de archivos que no son docs |
+| | `prune`, `max_depth` | `node_modules, .git, …`, `4` | qué no recorrer al buscar carpetas de docs adentro de repos |
+| `[sync]` | `auto` | `true` | sync en segundo plano y en los hooks |
+| | `timeout`, `hook_timeout` | `60`, `15` | segundos por remoto (a mano / en el hook de handoffs) |
+| `[mcp]` | `instructions` | (las de fábrica) | archivo con las instrucciones del servidor MCP |
+| `[claude_code]` | `mcp_name` | `cairn` | nombre con el que `integrate` registra el MCP |
+| | `start_timeout`, `end_timeout` | `30`, `10` | timeout de los hooks `SessionStart` y `SessionEnd` |
+
+`cairn defaults <carpeta>` exporta las plantillas y las instrucciones de fábrica para partir de
+ellas, y muestra qué poner en la config. Una config que no carga no se guarda: `cairn` vuelve a la
+anterior.
+
 ## Instalación
 
 ```bash

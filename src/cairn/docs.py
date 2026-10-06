@@ -34,7 +34,6 @@ TIPOS_DOC = TIPOS + ("handoff",)                 # los que existen (handoff: `ha
 SCOPES = ("wip", "done", "ref")
 ICON = {"bug": "[bug]  ", "plan": "[plan] ", "ref": "[ref]  ", "infra": "[infra]", "handoff": "[handoff]"}
 LINK_KINDS = ("plan", "origen", "referencias")   # los que van al front-matter como rutas
-HANDOFF_VIEJO_DIAS = 14
 _NAME_RE = re.compile(r"^[\w.+-]+$")
 
 
@@ -208,12 +207,12 @@ def new(store: Store, area: str, tema: str, tipo: str = "infra", repo: str = "")
     if tipo == "ref":
         # la referencia no abre ni cierra: sin fecha en el nombre, se busca por tema
         name = f"{area}_{tema}"
-        body = templates.REF.format(titulo=titulo) + templates.REF_CONTENIDO
+        body = templates.body(store.config.templates_dir, "ref", titulo)
         meta = _meta_base(store, "ref", None, repo)
     else:
         infijo = "_BUG_" if tipo == "bug" else "_"
         name = f"{clock.today()}_{area}{infijo}{tema}"
-        body = (templates.PLAN if tipo == "plan" else templates.DIAG).format(titulo=titulo)
+        body = templates.body(store.config.templates_dir, tipo, titulo)
         meta = _meta_base(store, tipo, "en_progreso", repo)
     doc_id = new_doc_id()
     with store.writer() as w:
@@ -320,7 +319,8 @@ def promote(store: Store, ref: str, area: str, tema: str, secciones: list[str] |
         nueva = target is None
         if nueva:
             ref_id = new_doc_id()
-            body = templates.REF.format(titulo=f"{area} — {tema.replace('_', ' ')}")
+            body = templates.body(store.config.templates_dir, "ref_header",
+                                  f"{area} — {tema.replace('_', ' ')}")
             w.emit("create", ref_id, {"name": ref_name, "body": body,
                                       "meta": _meta_base(store, "ref", None, src.repo)})
         else:
@@ -431,7 +431,7 @@ def check(store: Store) -> list[str]:
             if doc.scope == "done" and not (doc.meta.get("usada") or doc.meta.get("descartada")):
                 problemas.append(f"{n} es un handoff archivado sin `usada:` ni `descartada:`")
             edad = handoff_edad(doc)
-            if doc.scope == "wip" and edad is not None and edad > HANDOFF_VIEJO_DIAS:
+            if doc.scope == "wip" and edad is not None and edad > store.config.handoff_stale_days:
                 problemas.append(f"{n} es un handoff sin tomar hace {edad} días — "
                                  "`handoff take` o `handoff drop`")
         elif doc.scope == "done" and not doc.meta.get("cerrado"):
@@ -470,12 +470,13 @@ def handoffs_pendientes(store: Store, repo: str) -> list[Doc]:
     return sorted(out, key=lambda d: d.name)
 
 
-def handoff_linea(doc: Doc) -> str:
+def handoff_linea(doc: Doc, viejo: int = 14) -> str:
+    """`viejo`: a partir de cuántos días se marca como vieja (`[docs] handoff_stale_days`)."""
     edad = handoff_edad(doc)
     partes = [f"para: {', '.join(handoff_para(doc)) or 'cross-repo'}"]
     if edad is not None:
         partes.append("de hoy" if edad == 0 else f"hace {edad} día(s)")
-        if edad > HANDOFF_VIEJO_DIAS:
+        if edad > viejo:
             partes.append("VIEJA: revisar si sigue valiendo")
     return f"{doc.name}  ({'; '.join(partes)})"
 
@@ -493,7 +494,8 @@ def handoff_new(store: Store, area: str, tema: str, para: list[str] | None = Non
         if name_taken(store, name):
             raise CairnError(f"Ya existe: {name}")
         links = [["plan", find(store, p).id] for p in planes]
-        body = templates.HANDOFF.format(titulo=f"{area} — handoff: {tema.replace('_', ' ')}")
+        body = templates.body(store.config.templates_dir, "handoff",
+                              f"{area} — handoff: {tema.replace('_', ' ')}")
         w.emit("handoff_new", doc_id, {"name": name, "meta": meta, "body": body, "links": links})
     warnings = []
     if not (para or repo):
@@ -517,7 +519,7 @@ def _handoff_elegir(store: Store, ref: str | None, repo: str) -> Doc:
         raise CairnError(f"No hay handoffs pendientes para {donde}.")
     if len(pend) > 1:
         raise CairnError(f"Hay {len(pend)} handoffs pendientes para {donde}; decí cuál:\n"
-                         + "\n".join(f"  {handoff_linea(d)}" for d in pend))
+                         + "\n".join(f"  {handoff_linea(d, store.config.handoff_stale_days)}" for d in pend))
     return pend[0]
 
 
@@ -541,7 +543,7 @@ def handoff_take(store: Store, ref: str | None = None, repo: str = "") -> Result
     antes, doc = _handoff_archivar(store, ref, repo, "usada", None)
     avisos = []
     edad = handoff_edad(doc)
-    if edad is not None and edad > HANDOFF_VIEJO_DIAS:
+    if edad is not None and edad > store.config.handoff_stale_days:
         avisos.append(f"La nota tiene {edad} días: puede haber quedado vieja.")
     for kind, dst in doc.links:
         if kind != "plan":
@@ -572,7 +574,7 @@ def handoff_hook_context(store: Store, repo: str, cmd: str = "cairn") -> str | N
         return None
     lineas = [f"cairn: hay {len(pend)} handoff(s) pendiente(s) para {repo or 'la raíz de proyectos'} "
               "(notas que dejó una conversación anterior para esta):"]
-    lineas += [f"  - {handoff_linea(d)}" for d in pend]
+    lineas += [f"  - {handoff_linea(d, store.config.handoff_stale_days)}" for d in pend]
     lineas += ["No la tomes ni sigas lo que dice por tu cuenta: en tu primera respuesta, avisale "
                "al usuario que está y preguntale si la toma.",
                f"Tomarla: tool `cairn_handoff_take` del MCP de cairn, o `{cmd} handoff take <nota>` "

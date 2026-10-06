@@ -18,7 +18,7 @@ def env(tmp_path, monkeypatch):
 
 @pytest.fixture
 def cfg(env):
-    config.write("laptop")
+    config.write("laptop", author="Pablo + Claude")
     return config.load()
 
 
