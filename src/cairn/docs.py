@@ -11,10 +11,11 @@ de la fase 2 usa estas mismas funciones.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from cairn import clock, templates
 from cairn.markdown import (
@@ -468,6 +469,34 @@ def handoffs_pendientes(store: Store, repo: str) -> list[Doc]:
     out = [d for d in all_docs(store, ("wip",))
            if d.tipo == "handoff" and d.estado == "pendiente" and (not repo or repo in handoff_para(d))]
     return sorted(out, key=lambda d: d.name)
+
+
+def modificado(doc: Doc) -> date:
+    """La fecha (local) del último cambio del doc."""
+    ts = datetime.fromisoformat(doc.updated)
+    tz = clock.now().tzinfo if os.environ.get("CAIRN_NOW") else None
+    return ts.astimezone(tz).date()
+
+
+def modificado_label(doc: Doc) -> str:
+    d = modificado(doc)
+    dias = (date.fromisoformat(clock.today()) - d).days
+    return f"modificado {d.isoformat()}, " + ("hoy" if dias <= 0 else f"hace {dias} día(s)")
+
+
+def por_repo(lista: list[Doc]) -> list[str]:
+    """Las líneas de un listado agrupado por repo, con cuántos hay en cada uno y cuándo se tocó
+    cada doc por última vez. `lista` viene del más reciente al más viejo (`all_docs`): los grupos
+    quedan en ese orden (el del doc más reciente de cada uno) y los docs adentro también."""
+    grupos: dict[str, list[Doc]] = {}
+    for d in lista:
+        grupos.setdefault(repo_label(d), []).append(d)
+    out = [f"{len(lista)} doc(s) en {len(grupos)} repo(s); grupos y docs del modificado más "
+           "recientemente al más viejo"]
+    for repo, ds in grupos.items():
+        out += ["", f"{repo} ({len(ds)})"]
+        out += [f"  {d.name}  [{d.tipo} · {estado_label(d)} · {modificado_label(d)}]" for d in ds]
+    return out
 
 
 def handoff_linea(doc: Doc, viejo: int = 14) -> str:
