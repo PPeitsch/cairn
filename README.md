@@ -47,6 +47,8 @@ cambia el formato de los eventos, así que dos nodos pueden tener configs distin
 | `[sync]` | `auto` | `true` | sync en segundo plano y en los hooks |
 | | `timeout`, `hook_timeout` | `60`, `15` | segundos por remoto (a mano / en el hook de handoffs) |
 | `[mcp]` | `instructions` | (las de fábrica) | archivo con las instrucciones del servidor MCP |
+| | `show_max_chars` | `8000` | un doc más largo, `cairn_show` lo da como índice (TL;DR y secciones con sus líneas) |
+| | `search_max_docs`, `search_max_lines` | `15`, `3` | tope de lo que devuelve `cairn_search` con regex |
 | `[claude_code]` | `mcp_name` | `cairn` | nombre con el que `integrate` registra el MCP |
 | | `start_timeout`, `end_timeout` | `30`, `10` | timeout de los hooks `SessionStart` y `SessionEnd` |
 
@@ -81,7 +83,7 @@ cairn check                                 # log, proyección y docs en orden (
 cairn handoff new <area> <tema> [--para R]... [--plan <doc>]...
 cairn handoff take [<nota>] | drop <nota> [motivo] | list [--all] | hook
 
-cairn show <doc>[@rev]                      # rev: prefijo del hash o ~N
+cairn show <doc>[@rev] [--seccion S | --lineas A-B]   # rev: prefijo del hash o ~N
 cairn log [<doc>] [-n N]
 cairn diff <doc> [rev_a] [rev_b]            # default: el último cambio
 cairn export <destino> [scope] [--force]    # los docs como árbol _wip/_done/_ref

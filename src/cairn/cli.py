@@ -19,6 +19,7 @@ from cairn import (
     history,
     integrate,
     keys,
+    lectura,
     sync,
     transfer,
     tree,
@@ -336,7 +337,10 @@ def cmd_edit(args) -> int:
 def cmd_show(args) -> int:
     with _open() as store:
         _, text = history.show(store, args.doc)
-    sys.stdout.write(text)
+    if args.seccion or args.lineas:
+        print(lectura.vista(text, args.seccion, args.lineas))
+    else:
+        sys.stdout.write(text)
     return 0
 
 
@@ -642,6 +646,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("show", help="muestra un doc como archivo; `doc@rev` muestra una revisión")
     p.add_argument("doc", help="nombre o id, con @<hash> o @~N para una revisión")
+    p.add_argument("--seccion", help="sólo esa sección (el comienzo de su título), numerada")
+    p.add_argument("--lineas", help="sólo esas líneas (`40-80`, `40-`, `40`), numeradas")
     p.set_defaults(func=cmd_show)
 
     p = sub.add_parser("log", help="historial de eventos de un doc (o de toda la base)")

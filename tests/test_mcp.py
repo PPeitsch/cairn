@@ -131,3 +131,28 @@ def test_promote_log_diff_weekly_check(node):
     assert "+## TL;DR" not in ok("cairn_diff", {"doc": "2026-03-10_demo_BUG_b"})
     assert "Se arregló el bug." in ok("cairn_weekly")
     assert "Todo en orden" in ok("cairn_check")
+
+
+def test_lectura_acotada(node, monkeypatch):
+    largo = "## TL;DR\n\nResumen.\n\n## Detalle\n\n" + "linea de relleno con costo\n" * 400
+    ok("cairn_new", {"area": "demo", "tema": "largo", "tipo": "plan", "body": "# demo largo\n\n" + largo})
+    idx = ok("cairn_show", {"doc": "2026-03-10_demo_largo"})
+    assert "esto es el índice, no el doc" in idx and "Resumen." in idx and "## Detalle  (líneas" in idx
+    assert idx.count("relleno") == 0
+    assert ok("cairn_show", {"doc": "2026-03-10_demo_largo", "completo": True}).count("relleno") == 400
+    sec = ok("cairn_show", {"doc": "2026-03-10_demo_largo", "seccion": "Detalle"})
+    assert sec.startswith("(sección «Detalle»") and sec.count("relleno") == 400
+    assert ok("cairn_show", {"doc": "2026-03-10_demo_largo", "lineas": "1-3"}).startswith("(líneas 1-3")
+    err, text = call("cairn_show", {"doc": "2026-03-10_demo_largo", "seccion": "nada"})
+    assert err and "Secciones:" in text
+
+    # la regex con tope: docs con más coincidencias primero, el resto por nombre
+    for i in range(3):
+        ok("cairn_new", {"area": "demo", "tema": f"chico{i}", "body": f"# chico {i}\n\ncosto\n"})
+    from cairn import config
+    config.update(lambda raw: raw.setdefault("mcp", {}).update(
+        {"search_max_docs": "2", "search_max_lines": "2"}))
+    out = ok("cairn_search", {"pattern": "costo"})
+    assert out.startswith('Búsqueda "costo": 4 doc(s)') and "se muestran los 2 con más coincidencias" in out
+    assert out.splitlines()[1].startswith("2026-03-10_demo_largo") and "(+398 más)" in out
+    assert "Otros 2 doc(s) con menos coincidencias:" in out and "fts=true" in out
