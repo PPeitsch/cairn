@@ -369,17 +369,32 @@ def search(store: Store, pattern: str, scopes: tuple[str, ...] = SCOPES) -> tupl
     return hits, len(docs)
 
 
-def search_fts(store: Store, query: str, scopes: tuple[str, ...] = SCOPES, limit: int = 20) -> list[Doc]:
-    """Búsqueda de texto completo (sintaxis FTS5, sin acentos ni mayúsculas), por relevancia."""
+@dataclass
+class FtsHit:
+    doc: Doc
+    fragmento: str      # el pedazo del doc donde coincide, con lo encontrado entre «»
+
+
+def search_fts(store: Store, query: str, scopes: tuple[str, ...] = SCOPES,
+               limit: int = 20) -> tuple[list[FtsHit], int]:
+    """Búsqueda de texto completo (sintaxis FTS5, sin acentos ni mayúsculas), por relevancia.
+    Devuelve hasta `limit` resultados, cada uno con el fragmento donde coincide, y cuántos docs
+    coinciden en total (para avisar si se cortó)."""
     marks = ",".join("?" * len(scopes))
+    where = f"FROM docs_fts f JOIN docs d ON d.id = f.doc_id WHERE docs_fts MATCH ? AND d.scope IN ({marks})"
     try:
         rows = store.projection.db.execute(
-            f"SELECT d.* FROM docs_fts f JOIN docs d ON d.id = f.doc_id "
-            f"WHERE docs_fts MATCH ? AND d.scope IN ({marks}) ORDER BY bm25(docs_fts) LIMIT ?",
-            (query, *scopes, limit)).fetchall()
+            f"SELECT d.*, snippet(docs_fts, -1, '«', '»', ' … ', 20) AS fragmento {where} "
+            "ORDER BY bm25(docs_fts) LIMIT ?", (query, *scopes, limit)).fetchall()
+        total = store.projection.db.execute(f"SELECT count(*) {where}", (query, *scopes)).fetchone()[0]
     except sqlite3.OperationalError as e:      # sintaxis FTS5 inválida
         raise CairnError(f"Consulta FTS inválida: {e}") from None
-    return [_doc_from_row(store, r) for r in rows]
+    return [FtsHit(_doc_from_row(store, r), " ".join(r["fragmento"].split())) for r in rows], total
+
+
+def fts_encabezado(query: str, hits: list[FtsHit], total: int) -> str:
+    cortado = f"; se muestran los {len(hits)} más relevantes" if total > len(hits) else ""
+    return f'Búsqueda FTS "{query}": {total} doc(s), por relevancia{cortado}'
 
 
 def weekly(store: Store, dias: int = 7) -> tuple[str, list[Doc]]:

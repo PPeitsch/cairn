@@ -136,14 +136,15 @@ def cairn_list(scope: Scope = "wip", por_repo: bool = True) -> str:
 def cairn_search(pattern: str, scope: Scope = "all", fts: bool = False) -> str:
     """Busca en todos los docs. Por defecto `pattern` es una regex (case-insensitive) sobre el doc
     como archivo, y devuelve las líneas que coinciden. Con `fts=true` es una consulta de texto
-    completo (sintaxis FTS5, sin acentos ni mayúsculas) ordenada por relevancia."""
+    completo (sintaxis FTS5, sin acentos ni mayúsculas) ordenada por relevancia: cada resultado
+    trae el fragmento donde coincide, con lo encontrado entre «»; si hay más de 20, lo dice."""
     with _open() as store:
         if fts:
-            found = docs.search_fts(store, pattern, _scopes(scope))
+            found, total = docs.search_fts(store, pattern, _scopes(scope))
             if not found:
                 return f'Búsqueda FTS "{pattern}": sin coincidencias.'
-            return "\n".join(f"{_linea(d)}\n    {d.tldr.splitlines()[0] if d.tldr else ''}".rstrip()
-                             for d in found)
+            return "\n".join([docs.fts_encabezado(pattern, found, total),
+                              *(f"{_linea(h.doc)}\n    {h.fragmento}" for h in found)])
         hits, total = docs.search(store, pattern, _scopes(scope))
         archivos = tree.search_files(store, pattern, _scopes(scope))
     if not hits and not archivos:

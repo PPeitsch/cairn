@@ -204,6 +204,10 @@ def test_search(poblado, capsys):
     assert "Regex inválida" in run(capsys, "search", "(", ok=False).err
     out = run(capsys, "search", "--fts", "tardaba").out
     assert f"_done/{HOY}_api_BUG_timeout.md" in out
+    assert "«tardaba»" in out and "1 doc(s), por relevancia\n" in out      # el fragmento, no el TL;DR
+    hits, total = docs.search_fts(poblado, "api", limit=2)                 # los tres docs son de api
+    assert len(hits) == 2 and total == 3
+    assert "se muestran los 2 más relevantes" in docs.fts_encabezado("api", hits, total)
     assert "inválida" in run(capsys, "search", "--fts", '"', ok=False).err
 
 

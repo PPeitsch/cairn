@@ -158,17 +158,17 @@ def _resumen(doc: docs.Doc) -> str:
 def cmd_search(args) -> int:
     with _open() as store:
         if args.fts:
-            found = docs.search_fts(store, args.patron, _scopes(args.scope))
+            found, total = docs.search_fts(store, args.patron, _scopes(args.scope))
             if not found:
                 print(f"Búsqueda FTS \"{args.patron}\" — sin coincidencias")
                 return 0
-            print(f"Búsqueda FTS \"{args.patron}\" — {len(found)} doc(s), por relevancia\n")
-            for d in found:
+            print(docs.fts_encabezado(args.patron, found, total) + "\n")
+            for h in found:
+                d = h.doc
                 print(f"  {docs.ICON[d.tipo]}  {d.title}   ·   {docs.estado_label(d)}   ·   "
                       f"{docs.repo_label(d)}")
                 print(f"      {d.path}")
-                if r := _resumen(d):
-                    print(f"      {r}")
+                print(f"      {h.fragmento}")
                 print()
             return 0
         hits, total = docs.search(store, args.patron, _scopes(args.scope))
