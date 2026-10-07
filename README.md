@@ -73,7 +73,7 @@ cairn close <doc> [--force]                 # corta si quedan `- [ ]` sin tildar
 cairn reopen <doc> [motivo]
 cairn promote <doc> <area> <tema> [--seccion S]...   # secciones a una referencia, vinculadas
 
-cairn list [wip|done|ref|all]
+cairn list [wip|done|ref|all] [--por-repo]  # por repo: con conteos y fecha del último cambio
 cairn search <regex> [scope]                # o --fts <consulta> por relevancia
 cairn weekly [dias] [resumen|full]
 cairn check                                 # log, proyección y docs en orden (sale 1 si no)

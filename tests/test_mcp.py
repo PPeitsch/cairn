@@ -56,6 +56,11 @@ def test_ciclo_de_vida(node):
     assert err and "pendiente(s) sin tildar" in text
     assert "Cerrado" in ok("cairn_close", {"doc": "2026-03-10_demo_BUG_lento", "force": True})
     assert "BUG_lento" in ok("cairn_list", {"scope": "done"})
+    listado = ok("cairn_list", {"scope": "done"})
+    assert listado.startswith("1 doc(s) en 1 repo(s)") and "demo (1)" in listado
+    assert "modificado 2026-03-10, hoy" in listado
+    plano = ok("cairn_list", {"scope": "done", "por_repo": False})
+    assert plano.startswith("2026-03-10_demo_BUG_lento  [bug · cerrado") and "modificado" in plano
     assert "Sin docs en wip" in ok("cairn_list")
     assert "Reabierto" in ok("cairn_reopen", {"doc": "2026-03-10_demo_BUG_lento", "motivo": "volvió"})
 

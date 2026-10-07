@@ -110,20 +110,27 @@ def _con_avisos(texto: str, warnings: list[str]) -> str:
 
 # ──────────────────────────────────────────────────────────────── tools
 
-def cairn_list(scope: Scope = "wip") -> str:
+def cairn_list(scope: Scope = "wip", por_repo: bool = True) -> str:
     """Lista los docs: `wip` (abiertos, y aparte los handoffs pendientes), `done` (cerrados),
-    `ref` (referencias) o `all`. Los más recientes primero."""
+    `ref` (referencias) o `all`. Del modificado más recientemente al más viejo, y cada uno con la
+    fecha de su último cambio: es lo que dice en qué se estuvo trabajando (la fecha del nombre es
+    la de creación). Por defecto agrupado por repo con la cantidad de cada grupo: al resumirlo,
+    usar esos conteos y nombrar todos los docs del grupo, no recontarlos. `por_repo=false` da una
+    línea por doc."""
     with _open() as store:
         lista = docs.all_docs(store, _scopes(scope))
     if not lista:
         return f"Sin docs en {scope}."
     trabajo = [d for d in lista if not (d.scope == "wip" and d.tipo == "handoff")]
     handoffs = [d for d in lista if d.scope == "wip" and d.tipo == "handoff"]
-    out = [_linea(d) for d in trabajo]
+    if por_repo:
+        out = docs.por_repo(trabajo) if trabajo else []
+    else:
+        out = [f"{_linea(d)}  ({docs.modificado_label(d)})" for d in trabajo]
     if handoffs:
         viejo = store.config.handoff_stale_days
         out += ["", "handoffs pendientes:", *(f"  {docs.handoff_linea(d, viejo)}" for d in handoffs)]
-    return "\n".join(out)
+    return "\n".join(out).lstrip("\n")
 
 
 def cairn_search(pattern: str, scope: Scope = "all", fts: bool = False) -> str:

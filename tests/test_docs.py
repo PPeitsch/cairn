@@ -177,6 +177,23 @@ def test_list(poblado, capsys):
     assert run(capsys, "list", "done").out.strip() == f"{HOY}_api_BUG_timeout"
 
 
+def test_list_por_repo(poblado, capsys, monkeypatch):
+    run(capsys, "new", "otra", "cosa", "plan", "--repo", "otro")
+    run(capsys, "new", "web", "suelto", "plan", "--repo", "varios")
+    monkeypatch.setenv("CAIRN_NOW", "2026-03-15T12:00:00+00:00")
+    run(capsys, "handoff", "new", "api", "seguir")
+    out = run(capsys, "list", "--por-repo").out
+    assert out.splitlines()[0].startswith("3 doc(s) en 3 repo(s)")
+    assert "repo (1)\n" in out and "otro (1)\n" in out and "varios (1)\n" in out
+    assert (f"  {HOY}_api_abierto  [infra · abierto · modificado {HOY}, hace 5 día(s)]") in out
+    assert "handoffs pendientes:\n  2026-03-15_api_HANDOFF_seguir" in out
+    fill(poblado, f"{HOY}_otra_cosa", "## TL;DR", "## TL;DR\n\nalgo")     # lo último que se tocó
+    grupos = [ln for ln in run(capsys, "list", "--por-repo").out.splitlines() if ln.endswith("(1)")]
+    assert grupos[0] == "otro (1)"
+    assert "modificado 2026-03-15, hoy" in run(capsys, "list", "--por-repo").out
+    assert run(capsys, "list").out.splitlines()[0] == f"{HOY}_otra_cosa"   # el plano no cambia
+
+
 def test_search(poblado, capsys):
     out = run(capsys, "search", "TIMEOUT a 30").out
     assert "1 doc(s) de 3" in out

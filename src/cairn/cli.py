@@ -121,13 +121,17 @@ def cmd_promote(args) -> int:
 
 # ──────────────────────────────────────────────────────────────── consultas
 
-def _print_scope(store: Store, scope: str) -> None:
+def _print_scope(store: Store, scope: str, por_repo: bool = False) -> None:
     """En `wip` los handoffs van aparte: no son trabajo abierto sino notas que esperan a la
     próxima conversación."""
     lista = docs.all_docs(store, (scope,))
     handoffs = [d for d in lista if scope == "wip" and d.tipo == "handoff"]
-    for d in lista:
-        if d not in handoffs:
+    trabajo = [d for d in lista if d not in handoffs]
+    if por_repo:
+        if trabajo:
+            print("\n".join(docs.por_repo(trabajo)))
+    else:
+        for d in trabajo:
             print(d.name)
     if handoffs:
         print("\nhandoffs pendientes:")
@@ -140,9 +144,9 @@ def cmd_list(args) -> int:
         if args.scope == "all":
             for s in docs.SCOPES:
                 print(f"=== {s} ===")
-                _print_scope(store, s)
+                _print_scope(store, s, args.por_repo)
         else:
-            _print_scope(store, args.scope)
+            _print_scope(store, args.scope, args.por_repo)
     return 0
 
 
@@ -610,6 +614,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("list", help="lista los docs (default: los abiertos)")
     p.add_argument("scope", nargs="?", default="wip", choices=["wip", "done", "ref", "all"])
+    p.add_argument("--por-repo", action="store_true",
+                   help="agrupado por repo, con cuántos hay y cuándo se modificó cada uno")
     p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("search", help="busca en todos los docs (regex, case-insensitive)")
