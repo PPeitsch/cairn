@@ -9,7 +9,20 @@ import shlex
 import sys
 from pathlib import Path
 
-from cairn import __version__, access, clock, config, docs, edit, history, integrate, sync, transfer, tree
+from cairn import (
+    __version__,
+    access,
+    clock,
+    config,
+    docs,
+    edit,
+    history,
+    integrate,
+    keys,
+    sync,
+    transfer,
+    tree,
+)
 from cairn.context import repo_of_path
 from cairn.markdown import first_sentences, fmt_date
 from cairn.store import CairnError, Store
@@ -50,10 +63,13 @@ def cmd_init(args) -> int:
         print(f"Nodo inicializado: {cfg.node}")
     with Store(cfg) as store:
         n = store.projection.count_events()
+        huella = keys.fingerprint(store.public_line())
     print(f"  config:    {cfg.path}")
     print(f"  datos:     {cfg.data_dir}")
     print(f"  proyectos: {cfg.projects}")
     print(f"  eventos:   {n}")
+    print(f"  huella:    {huella}")
+    print(f"  {FINGERPRINT_NOTE}")
     return 0
 
 
@@ -436,13 +452,25 @@ def cmd_integrate(args) -> int:
 
 # ──────────────────────────────────────────────────────────────── sync y acceso
 
+FINGERPRINT_NOTE = ("anotá la huella fuera de este nodo (p. ej. en el gestor de contraseñas): si "
+                    "pierde sus datos, `sync --restore --old-key <huella>` la usa para no aceptar "
+                    "a ciegas las claves viejas que mande el par")
+
+
 def cmd_key(args) -> int:
     with _open() as store:
         if args.rotate:
             for line in access.rotate_key(store):
                 print(line)
+            print(f"huella nueva: {keys.fingerprint(store.public_line())}")
+            print(FINGERPRINT_NOTE)
             return 0
-        print(store.public_line())
+        line = store.public_line()
+    if args.fingerprint:
+        print(keys.fingerprint(line))
+    else:
+        print(line)                       # sola en stdout: `authorize <nodo> "$(cairn key)"`
+        warn(f"huella: {keys.fingerprint(line)} ({FINGERPRINT_NOTE})")
     return 0
 
 
@@ -470,9 +498,9 @@ def cmd_peers(args) -> int:
         print("Sin nodos autorizados.")
     for p in cfg.peers.values():
         estado = f"revocado {p.revoked}" if p.revoked else ("ssh" if p.node in con_ssh else "sólo eventos")
-        print(f"{p.node:<16} {estado:<18} {p.key[:40]}…")
+        print(f"{p.node:<16} {estado:<18} {keys.fingerprint(p.key)}")
         for k in p.old:
-            print(f"{'':<16} {'anterior':<18} {k.key[:40]}…  hasta {k.until[:19]}")
+            print(f"{'':<16} {'anterior':<18} {keys.fingerprint(k.key)}  hasta {k.until[:19]}")
     return 0
 
 
@@ -502,7 +530,13 @@ def cmd_sync(args) -> int:
                 return 0
             raise CairnError("Sin remotos: `cairn remote add <nombre> ssh://usuario@host`")
         timeout = args.timeout or store.config.sync_timeout
+        if (args.old_key or args.trust_peer_keys) and not args.restore:
+            raise CairnError("--old-key y --trust-peer-keys son para `sync --restore`")
         if args.restore:
+            try:
+                old_keys = [keys.as_fingerprint(k) for k in args.old_key]
+            except keys.KeyFileError as e:
+                raise CairnError(f"--old-key: {e}") from None
             if len(args.remotos) != 1:
                 raise CairnError("--restore trae el log de este nodo desde un solo remoto: "
                                  "`cairn sync --restore <remoto>`")
@@ -512,7 +546,8 @@ def cmd_sync(args) -> int:
             remote = store.config.remotes.get(args.remotos[0])
             if remote is None:
                 raise CairnError(f"No hay remoto: {args.remotos[0]}")
-            results = [sync.sync_remote(store, remote, timeout=timeout, restore=True)]
+            results = [sync.sync_remote(store, remote, timeout=timeout, restore=True,
+                                        old_keys=old_keys, trust_peer_keys=args.trust_peer_keys)]
         else:
             results = sync.sync_all(store, args.remotos, timeout=timeout)
     cuando = f"{clock.now().astimezone().isoformat(timespec='seconds')} " if args.quiet else ""
@@ -656,6 +691,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_integrate)
 
     p = sub.add_parser("key", help="la clave pública de este nodo (para `authorize` en el otro)")
+    p.add_argument("--fingerprint", action="store_true",
+                   help="sólo la huella (`SHA256:…`), para anotarla fuera del nodo")
     p.add_argument("--rotate", action="store_true",
                    help="cambiarla (la anterior sigue verificando lo ya firmado; los pares la "
                         "aceptan con `authorize --replace`)")
@@ -699,6 +736,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="lanzarlo en segundo plano y volver (salida en <datos>/sync.log)")
     p.add_argument("--restore", action="store_true",
                    help="traer también el log de este nodo (perdió sus datos y se reinicializó)")
+    p.add_argument("--old-key", action="append", default=[], metavar="HUELLA",
+                   help="con --restore: huella (o pública) de una clave anterior de este nodo, "
+                        "anotada fuera de él; una por clave. Las que mande el par sin coincidir "
+                        "cortan el restore")
+    p.add_argument("--trust-peer-keys", action="store_true",
+                   help="con --restore: aceptar las claves anteriores que mande el par sin "
+                        "controlarlas (si no se anotaron las huellas)")
     p.set_defaults(func=cmd_sync)
 
     p = sub.add_parser("sync-peer", help="el otro lado de `sync` (lo lanza ssh, no se corre a mano)")

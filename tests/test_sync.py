@@ -12,7 +12,7 @@ import threading
 
 import pytest
 
-from cairn import access, cli, config, docs, edit
+from cairn import access, cli, config, docs, edit, keys
 from cairn.store import Store
 from cairn.sync import Channel, ProtocolError, client, serve
 
@@ -478,15 +478,21 @@ def test_restore_de_un_nodo_que_perdio_sus_datos(pair):
         edit.apply(s, a.name, body="# editado\n")
     vps.new("demo", "del_vps")
     run_sync(laptop, vps)
+    huella = keys.fingerprint(laptop.pub)            # la que se anotó fuera de la laptop
     wipe(laptop)
     assert laptop.names() == set()
 
     # sin el replace en el vps, el restore no arranca
-    res, _ = run_sync_restore(laptop, vps)
+    res, _ = run_sync_restore(laptop, vps, old_keys=[huella])
     assert isinstance(res, ProtocolError) and "--replace" in str(res)
     vps.use()
     access.authorize("laptop", laptop.pub, ssh=True, command=["/opt/cairn"], replace=True)
-    res, srv = run_sync_restore(laptop, vps)
+    # sin la huella anotada tampoco: el vps dice cuál era la clave, pero no se le cree a ciegas
+    res, _ = run_sync_restore(laptop, vps)
+    assert isinstance(res, ProtocolError) and "--old-key" in str(res) and huella in str(res)
+    with laptop.store() as s:
+        assert s.config.old_keys == () and laptop.names() == set()
+    res, srv = run_sync_restore(laptop, vps, old_keys=[huella])
     assert res.ok and srv.ok, (res.errors, srv.errors)
     assert laptop.names() == vps.names() == {a.name, "2026-03-10_demo_del_vps"}
     assert laptop.body(a.name) == "# editado\n"
@@ -501,7 +507,7 @@ def test_restore_de_un_nodo_que_perdio_sus_datos(pair):
     with vps.store() as s:
         assert docs.check(s) == []
     # un segundo restore ya no corresponde
-    res, _ = run_sync_restore(laptop, vps)
+    res, _ = run_sync_restore(laptop, vps, old_keys=[huella])
     assert isinstance(res, ProtocolError) and "ya tiene eventos propios" in str(res)
 
 
@@ -516,7 +522,7 @@ def test_sin_restore_el_log_propio_no_se_acepta(pair):
     assert res.ok and laptop.names() == set()        # el vps no le manda su propio log
 
 
-def run_sync_restore(cli_node, srv_node):
+def run_sync_restore(cli_node, srv_node, **opts):
     c2s_r, c2s_w = os.pipe()
     s2c_r, s2c_w = os.pipe()
     srv_cfg = (srv_node.use(), config.load())[1]
@@ -535,7 +541,7 @@ def run_sync_restore(cli_node, srv_node):
     try:
         with Store(cli_cfg) as s, open(s2c_r, "rb") as r, open(c2s_w, "wb") as w:
             try:
-                out["cli"] = client(s, Channel(r, w), srv_node.name, restore=True)
+                out["cli"] = client(s, Channel(r, w), srv_node.name, restore=True, **opts)
             except ProtocolError as e:
                 out["cli"] = e
                 w.close()
@@ -562,3 +568,96 @@ def test_cli_restore_y_rotate(pair, capsys):
     now = capsys.readouterr().out.strip()
     assert now != before and (laptop.root / "data" / "node_key.pub").read_text().strip() == now
     assert not (laptop.root / "data" / "new_node_key").exists()
+
+
+def _perdio_y_se_reautorizo(pair):
+    """La laptop escribió, sincronizó y perdió sus datos; el vps ya aceptó su clave nueva.
+    Devuelve el nombre del doc y la huella de la clave perdida."""
+    laptop, vps = pair
+    a = laptop.new("demo", "uno")
+    run_sync(laptop, vps)
+    huella = keys.fingerprint(laptop.pub)
+    wipe(laptop)
+    vps.use()
+    access.authorize("laptop", laptop.pub, ssh=True, command=["/opt/cairn"], replace=True)
+    return a.name, huella
+
+
+def _sin_restaurar(laptop):
+    with laptop.store() as s:
+        assert s.config.old_keys == () and s.log.segments("laptop") == []
+    assert laptop.names() == set()
+
+
+def test_restore_corta_si_el_par_manda_una_clave_vieja_que_no_es(pair):
+    laptop, vps = pair
+    _, huella = _perdio_y_se_reautorizo(pair)
+    # el vps comprometido: dice que la clave vieja de la laptop es otra, que controla él
+    falsa = Node("atacante", vps.root.parent, vps.mp).pub
+    vps.use()
+    config.update(lambda raw: raw["peers"]["laptop"]["old"]["1"].update({"key": falsa}))
+    res, _ = run_sync_restore(laptop, vps, old_keys=[huella])
+    assert isinstance(res, ProtocolError) and f"no tiene registrada la clave anterior {huella}" in str(res)
+    _sin_restaurar(laptop)
+    # sin huellas, avisa cuál dice el vps (la falsa) y tampoco restaura
+    res, _ = run_sync_restore(laptop, vps)
+    assert isinstance(res, ProtocolError) and keys.fingerprint(falsa) in str(res)
+    _sin_restaurar(laptop)
+
+
+def test_restore_con_una_huella_de_mas_o_mal_anotada(pair):
+    laptop, vps = pair
+    _, huella = _perdio_y_se_reautorizo(pair)
+    otra = keys.fingerprint(Node("otro", vps.root.parent, vps.mp).pub)
+    res, _ = run_sync_restore(laptop, vps, old_keys=[huella, otra])
+    assert isinstance(res, ProtocolError) and otra in str(res)
+    _sin_restaurar(laptop)
+
+
+def test_restore_confiando_en_el_par(pair):
+    laptop, vps = pair
+    name, _ = _perdio_y_se_reautorizo(pair)
+    res, srv = run_sync_restore(laptop, vps, trust_peer_keys=True)
+    assert res.ok and srv.ok, (res.errors, srv.errors)
+    assert name in laptop.names()
+
+
+def test_restore_con_la_misma_clave_no_pide_huellas(pair):
+    import shutil
+    laptop, vps = pair
+    a = laptop.new("demo", "uno")
+    run_sync(laptop, vps)
+    data = laptop.root / "data"
+    shutil.copy(data / "node_key", laptop.root / "backup_key")      # backup de la privada
+    wipe(laptop)
+    (data / "node_key").unlink()
+    (data / "node_key.pub").unlink()
+    shutil.copy(laptop.root / "backup_key", data / "node_key")
+    res, srv = run_sync_restore(laptop, vps)
+    assert res.ok and srv.ok, (res.errors, srv.errors)
+    assert a.name in laptop.names()
+
+
+def test_cli_huella_y_opciones_del_restore(pair, capsys):
+    laptop, vps = pair
+    laptop.use()
+    assert cli.main(["key"]) == 0
+    cap = capsys.readouterr()
+    assert cap.out.strip() == laptop.pub                            # sola, para `"$(cairn key)"`
+    assert keys.fingerprint(laptop.pub) in cap.err and "--old-key" in cap.err
+    assert cli.main(["key", "--fingerprint"]) == 0
+    assert capsys.readouterr().out.strip() == keys.fingerprint(laptop.pub)
+    access.remote_add("vps", "ssh://cairn@host")
+    assert cli.main(["sync", "--old-key", keys.fingerprint(laptop.pub)]) == 1
+    assert "son para `sync --restore`" in capsys.readouterr().err
+    assert cli.main(["sync", "--restore", "vps", "--old-key", "SHA256:mal"]) == 1
+    assert "huella inválida" in capsys.readouterr().err
+    assert cli.main(["key", "--rotate"]) == 0
+    out = capsys.readouterr().out
+    with laptop.store() as s:
+        assert f"huella nueva: {keys.fingerprint(s.public_line())}" in out
+    vps.use()
+    access.authorize("laptop", s.public_line(), ssh=False, replace=True)
+    assert cli.main(["peers"]) == 0
+    out = capsys.readouterr().out
+    assert keys.fingerprint(laptop.pub) in out and "anterior" in out

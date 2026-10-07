@@ -8,11 +8,14 @@ Una sola clave por nodo, para dos cosas:
   (`ssh -i <datos>/node_key`), y su pública es la línea que va al `authorized_keys` del otro.
 
 La pública se escribe como una línea de `authorized_keys`: `ssh-ed25519 AAAA… cairn:<nodo>`.
+Su huella (`SHA256:…`, la misma que da `ssh-keygen -lf`) es la forma corta de anotarla fuera del
+nodo: es lo que pide `sync --restore --old-key` para no tomar a ciegas las claves viejas de un par.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 from pathlib import Path
 
@@ -73,6 +76,28 @@ def normalize_public(line: str) -> str:
     """`ssh-ed25519 AAAA…` sin el comentario: la forma que se guarda y se compara."""
     parse_public(line)
     return " ".join(line.split()[:2])
+
+
+def fingerprint(line: str) -> str:
+    """`SHA256:…` de una pública, igual que `ssh-keygen -lf`."""
+    parse_public(line)
+    blob = base64.b64decode(line.split()[1])
+    return "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode("ascii").rstrip("=")
+
+
+def as_fingerprint(value: str) -> str:
+    """Una huella `SHA256:…` o una pública entera, llevada a huella (para comparar)."""
+    value = value.strip()
+    if value.startswith("SHA256:"):
+        body = value[len("SHA256:"):]
+        try:
+            ok = len(base64.b64decode(body + "=" * (-len(body) % 4), validate=True)) == 32
+        except ValueError:
+            ok = False
+        if not ok:
+            raise KeyFileError(f"huella inválida: {value} (se espera `SHA256:` y 43 caracteres)")
+        return value
+    return fingerprint(value)
 
 
 def sign(key: Ed25519PrivateKey, event_id: str) -> str:

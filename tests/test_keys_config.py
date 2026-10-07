@@ -59,3 +59,20 @@ def test_config_remotos_y_pares(cfg):
 def test_config_invalida(cfg):
     with pytest.raises(config.ConfigError, match="necesita `url`"):
         config.update(lambda raw: raw.update({"remotes": {"vps": {"key": "x"}}}))
+
+
+def test_huella_como_ssh_keygen(tmp_path):
+    import shutil
+    import subprocess
+    keys.generate(tmp_path / "node_key", "laptop")
+    line = (tmp_path / "node_key.pub").read_text().strip()
+    fp = keys.fingerprint(line)
+    assert fp.startswith("SHA256:") and len(fp) == len("SHA256:") + 43
+    assert keys.as_fingerprint(line) == keys.as_fingerprint(fp) == fp
+    if shutil.which("ssh-keygen"):
+        out = subprocess.run(["ssh-keygen", "-lf", str(tmp_path / "node_key.pub")],
+                             capture_output=True, text=True, check=True).stdout
+        assert out.split()[1] == fp
+    for bad in ("SHA256:corta", "SHA256:" + "!" * 43, "MD5:aa:bb"):
+        with pytest.raises(keys.KeyFileError):
+            keys.as_fingerprint(bad)

@@ -98,7 +98,7 @@ válida de un nodo autorizado no entra a la base, llegue como llegue.
 Sumar un nodo (p. ej. la laptop contra el VPS, con un usuario dedicado `cairn` en el VPS):
 
 ```bash
-laptop$ cairn key                                   # copiar la línea
+laptop$ cairn key                                   # copiar la línea; anotar la huella
 vps$    cairn authorize laptop "ssh-ed25519 AAAA… cairn:laptop"
 vps$    cairn key                                   # copiar la línea
 laptop$ cairn authorize vps "ssh-ed25519 AAAA… cairn:vps" --no-ssh
@@ -111,6 +111,12 @@ laptop$ cairn sync
 y no puede hacerse pasar por otro nodo. `--no-ssh` sólo confía en los eventos del nodo (para uno
 que no se conecta a este, cuyos eventos llegan a través de otro). Cada nodo tiene que autorizar
 a todos los demás, así un nodo comprometido no puede inyectar eventos a nombre de otro.
+
+**La huella de la clave.** `cairn key` (y `init`, y `key --rotate`) muestra también la huella de
+la clave del nodo, `SHA256:…`, la misma que da `ssh-keygen -lf`; `cairn key --fingerprint`, sólo
+esa. Conviene anotarla **fuera del nodo** (en el gestor de contraseñas, p. ej.): si el nodo pierde
+sus datos, es lo que permite controlar en el restore las claves viejas que mande el par. No es
+secreta. `cairn peers` muestra las huellas de los nodos autorizados y de sus claves anteriores.
 
 ```bash
 cairn sync [remoto]... [--quiet] [--timeout S] [--background]
@@ -131,20 +137,25 @@ verifica eventos de antes del cambio. Reautorizar un nodo revocado con otra clav
 vieja para lo firmado hasta el día de la revocación.
 
 **Restore de un nodo que perdió sus datos.** Se reinicializa con el mismo nombre (clave nueva),
-se acepta esa clave en un par y se le pide el log propio:
+se acepta esa clave en un par y se le pide el log propio, con la huella de la clave perdida:
 
 ```bash
 laptop$ cairn init --node laptop && cairn key       # copiar la línea
 vps$    cairn authorize laptop "ssh-ed25519 AAAA… cairn:laptop" --replace
 laptop$ cairn authorize vps "ssh-ed25519 AAAA… cairn:vps" --no-ssh   # y el resto de los nodos
 laptop$ cairn remote add vps ssh://cairn@vps.example
-laptop$ cairn sync --restore vps
+laptop$ cairn sync --restore vps --old-key SHA256:…  # la huella anotada
 ```
 
 El restore sólo corre en un nodo sin eventos propios, y sólo si la clave vigente que el par
-tiene registrada para él es la suya. Las claves anteriores las toma de ese par: si el par
-estuviera comprometido podría fabricar historia vieja a nombre del nodo, así que conviene
-comparar `cairn peers` del par con el de otro nodo antes de restaurar.
+tiene registrada para él es la suya. El historial viejo está firmado con la clave perdida, y esa
+clave la manda el par; si se la creyera a ciegas, un par comprometido podría mandar una inventada
+y, firmada con ella, historia falsa a nombre del nodo. Por eso cada clave anterior que mande
+tiene que coincidir con una huella pasada con `--old-key` (una por clave, si hubo varias); si
+alguna no coincide, o el par no tiene alguna de las huellas pasadas, el restore se corta sin
+guardar nada y dice cuáles mandó el par. Sin las huellas anotadas, `--trust-peer-keys` acepta las
+del par sin control. Si la clave privada se recuperó de un backup, no hay clave vieja que
+controlar y `--old-key` no hace falta.
 
 ### Agentes (MCP)
 

@@ -27,6 +27,12 @@ claves que tiene registradas para ese nodo (`"keys": {"key", "old"}`) y manda ta
 del log del cliente. El cliente sólo lo acepta si no tiene eventos propios, si la clave vigente
 que el servidor tiene es la suya (si se reinstaló con clave nueva, el servidor la tuvo que
 aceptar antes con `authorize --replace`) y si cada evento verifica con alguna de sus claves.
+
+Las claves anteriores no se toman a ciegas del servidor: un par comprometido podría mandar una
+inventada y, firmados con ella, eventos viejos falsos a nombre de este nodo. Cada clave anterior
+que el nodo no tenga ya en su config tiene que coincidir con una huella que pasa el usuario
+(`--old-key`, anotada fuera del nodo cuando la clave era la vigente); si no, el restore se corta
+antes de recibir nada. `--trust-peer-keys` acepta las del servidor sin control (lo de antes).
 """
 
 from __future__ import annotations
@@ -240,9 +246,12 @@ def serve(store: Store, ch: Channel, as_node: str | None = None) -> Result:
     return res
 
 
-def _adopt_keys(store: Store, record, peer: str) -> int:
+def _adopt_keys(store: Store, record, peer: str, expected: list[str] | None = None,
+                trust_peer: bool = False) -> int:
     """Restore: comprueba que el par tenga registrada la clave vigente de este nodo y adopta
-    las anteriores que tenga (para verificar lo que este nodo firmó antes). Cuántas sumó."""
+    las anteriores que tenga (para verificar lo que este nodo firmó antes), cada una contra las
+    huellas `expected` que pasó el usuario. Cuántas sumó; ProtocolError sin tocar la config si
+    alguna no se puede controlar."""
     from cairn import keys
     if not isinstance(record, dict) or not isinstance(record.get("key"), str):
         raise ProtocolError(f"{peer} no contestó el restore (¿otra versión de cairn?)")
@@ -258,6 +267,22 @@ def _adopt_keys(store: Store, record, peer: str) -> int:
                             "--replace` y volver a probar")
     known = {k.key for k in store.config.old_keys}
     nuevas = [k for k in old if k.key not in known and k.key != mine]
+    if not trust_peer:
+        wanted = set(expected or ())
+        offered = {keys.fingerprint(k.key) for k in old} | {keys.fingerprint(k) for k in known}
+        offered.add(keys.fingerprint(mine))
+        if faltan := sorted(wanted - offered):
+            raise ProtocolError(f"{peer} no tiene registrada la clave anterior {', '.join(faltan)} de "
+                                f"{store.config.node}: o la huella está mal anotada, o {peer} no es "
+                                "de fiar; no se restauró nada")
+        if sin_control := [k for k in nuevas if keys.fingerprint(k.key) not in wanted]:
+            lista = "\n".join(f"  {keys.fingerprint(k.key)}  (hasta {k.until[:19]})"
+                              for k in sin_control)
+            raise ProtocolError(
+                f"{peer} dice que {store.config.node} firmó antes con estas claves:\n{lista}\n"
+                "Compararlas con las huellas que anotaste y pasarlas con `--old-key <huella>` "
+                "(una por clave). Si alguna no es tuya, no restaurar desde este par. Sin las "
+                "huellas, `--trust-peer-keys` las acepta sin control. No se restauró nada.")
     if nuevas:
         merged = [*store.config.old_keys, *nuevas]
         store.config = config.update(lambda raw: raw.setdefault("node", {}).update(
@@ -266,7 +291,8 @@ def _adopt_keys(store: Store, record, peer: str) -> int:
     return len(nuevas)
 
 
-def client(store: Store, ch: Channel, name: str, restore: bool = False) -> Result:
+def client(store: Store, ch: Channel, name: str, restore: bool = False,
+           old_keys: list[str] | None = None, trust_peer_keys: bool = False) -> Result:
     res = Result(remote=name)
     if restore and store.log.segments(store.config.node):
         raise ProtocolError(f"{store.config.node} ya tiene eventos propios: el restore es para un nodo "
@@ -281,7 +307,7 @@ def client(store: Store, ch: Channel, name: str, restore: bool = False) -> Resul
         raise ProtocolError(f"el remoto {name} es el nodo {peer}, que no está autorizado acá: "
                             f"`cairn authorize {peer} <su clave> --no-ssh`")
     if restore:
-        _adopt_keys(store, hello.get("keys"), peer)
+        _adopt_keys(store, hello.get("keys"), peer, old_keys, trust_peer_keys)
     ch.send({"inventory": _inventory(store)})
     theirs = ch.expect("inventory")
     chunks, conflicts = chunks_for(store, theirs)
@@ -309,7 +335,8 @@ def ssh_command(cfg: config.Config, remote: config.Remote) -> list[str]:
 
 
 def sync_remote(store: Store, remote: config.Remote, timeout: float | None = None,
-                restore: bool = False) -> Result:
+                restore: bool = False, old_keys: list[str] | None = None,
+                trust_peer_keys: bool = False) -> Result:
     argv = ssh_command(store.config, remote)
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -325,7 +352,8 @@ def sync_remote(store: Store, remote: config.Remote, timeout: float | None = Non
     if timer:
         timer.start()
     try:
-        res = client(store, Channel(proc.stdout, proc.stdin), remote.name, restore)
+        res = client(store, Channel(proc.stdout, proc.stdin), remote.name, restore, old_keys,
+                     trust_peer_keys)
     except (ProtocolError, OSError) as e:
         res = Result(remote.name, errors=[str(e)])
     finally:
