@@ -71,7 +71,8 @@ def test_new_con_cuerpo_y_busqueda(node):
     shown = ok("cairn_show", {"doc": "2026-03-10_demo_raro"})
     assert shown.endswith(body)
     assert "regla horizontal" in ok("cairn_search", {"pattern": "regla"})
-    assert "2026-03-10_demo_raro" in ok("cairn_search", {"pattern": "horizontal", "fts": True})
+    fts = ok("cairn_search", {"pattern": "horizontal", "fts": True})
+    assert "2026-03-10_demo_raro" in fts and "«horizontal»" in fts and fts.startswith("Búsqueda FTS")
     assert "sin coincidencias" in ok("cairn_search", {"pattern": "zzz"})
 
 
