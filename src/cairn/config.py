@@ -13,7 +13,10 @@
                      file_dirs (default "scripts, validations"), prune (carpetas que no se
                      recorren), max_depth (default 4)
     [mcp]            instructions = archivo con las instrucciones del servidor (reemplaza las de
-                     fábrica; `cairn defaults <carpeta>` las exporta para partir de ellas)
+                     fábrica; `cairn defaults <carpeta>` las exporta para partir de ellas),
+                     show_max_chars (default 8000: un doc más largo, cairn_show lo da como índice),
+                     search_max_docs (default 15) y search_max_lines (default 3): el tope de lo
+                     que devuelve cairn_search con regex
     [claude_code]    mcp_name (default "cairn"), start_timeout (default 30), end_timeout (10)
     [sync]           auto = "true" | "false"   (sync en segundo plano y en los hooks; default true),
                      timeout (segundos por remoto, default 60), hook_timeout (el pull del hook
@@ -138,6 +141,9 @@ class Config:
     prune: tuple[str, ...] = DEFAULT_PRUNE
     max_depth: int = 4
     mcp_instructions: Path | None = None
+    show_max_chars: int = 8000
+    search_max_docs: int = 15
+    search_max_lines: int = 3
     mcp_name: str = "cairn"
     start_timeout: int = 30
     end_timeout: int = 10
@@ -258,6 +264,9 @@ def load() -> Config:
         prune=_names(docs, "prune", DEFAULT_PRUNE),
         max_depth=_num(docs, "max_depth", 4, int, "docs", path),
         mcp_instructions=_expand(mcp["instructions"]) if mcp.get("instructions") else None,
+        show_max_chars=_num(mcp, "show_max_chars", 8000, int, "mcp", path),
+        search_max_docs=_num(mcp, "search_max_docs", 15, int, "mcp", path),
+        search_max_lines=_num(mcp, "search_max_lines", 3, int, "mcp", path),
         mcp_name=mcp_name,
         start_timeout=_num(cc, "start_timeout", 30, int, "claude_code", path),
         end_timeout=_num(cc, "end_timeout", 10, int, "claude_code", path),

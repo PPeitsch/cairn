@@ -18,7 +18,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cairn import __version__, config, docs, edit, history, sync, tree
+from cairn import __version__, config, docs, edit, history, lectura, sync, tree
 from cairn.context import repo_of_path
 from cairn.store import CairnError, Store
 
@@ -48,6 +48,14 @@ Tipos y estructura (cairn_new crea el esqueleto; completarlo con cairn_edit)
   cairn_promote lleva esas secciones a una referencia y deja los dos docs vinculados.
   Si una referencia es un relevamiento con hallazgos (un review), marcar el estado de cada uno
   (OK / parcial / pendiente) y, al re-verificarlo, contra qué commit o versión.
+
+Buscar y leer sin gastar contexto
+- Para una pregunta por tema ("¿qué tenemos sobre X?"): cairn_search con fts=true, que ordena
+  por relevancia y muestra el fragmento que coincide. La regex, para nombres o identificadores
+  exactos; una regex amplia (palabras comunes con `|`) trae mucho y sirve poco.
+- Leer por partes: cairn_show de un doc largo devuelve su índice; pedir la sección
+  (`seccion=`) o las líneas (`lineas=`, las de la búsqueda) que hagan falta. El doc entero
+  (`completo=true`) sólo si de verdad hace falta todo.
 
 Archivos que no son docs
 - Scripts de validación o debug, reportes autogenerados y CSV no van a cairn: son archivos en
@@ -135,8 +143,10 @@ def cairn_list(scope: Scope = "wip", por_repo: bool = True) -> str:
 
 def cairn_search(pattern: str, scope: Scope = "all", fts: bool = False) -> str:
     """Busca en todos los docs. Por defecto `pattern` es una regex (case-insensitive) sobre el doc
-    como archivo, y devuelve las líneas que coinciden. Con `fts=true` es una consulta de texto
-    completo (sintaxis FTS5, sin acentos ni mayúsculas) ordenada por relevancia: cada resultado
+    como archivo, y devuelve las líneas que coinciden (con su número: sirve para cairn_show con
+    `lineas`), de los docs con más coincidencias primero y con un tope; los demás, sólo por
+    nombre. La regex es para nombres o identificadores exactos; para un tema, `fts=true`: una
+    consulta de texto completo (sintaxis FTS5, sin acentos ni mayúsculas) por relevancia; cada resultado
     trae el fragmento donde coincide, con lo encontrado entre «»; si hay más de 20, lo dice."""
     with _open() as store:
         if fts:
@@ -149,12 +159,22 @@ def cairn_search(pattern: str, scope: Scope = "all", fts: bool = False) -> str:
         archivos = tree.search_files(store, pattern, _scopes(scope))
     if not hits and not archivos:
         return f'Búsqueda "{pattern}": sin coincidencias en {total} docs.'
-    out = [f'Búsqueda "{pattern}": {len(hits)} doc(s) de {total}']
-    for h in hits:
+    max_docs, max_lines = store.config.search_max_docs, store.config.search_max_lines
+    ranked = sorted(hits, key=lambda h: -len(h.lines))     # estable: empata por repo y fecha
+    shown, rest = ranked[:max_docs], ranked[max_docs:]
+    out = [f'Búsqueda "{pattern}": {len(hits)} doc(s) de {total}'
+           + (f"; se muestran los {len(shown)} con más coincidencias" if rest else "")]
+    for h in shown:
         out.append(_linea(h.doc))
-        out += [f"    {n}: {line.strip()[:160]}" for n, line in h.lines[:5]]
-        if len(h.lines) > 5:
-            out.append(f"    (+{len(h.lines) - 5} más)")
+        out += [f"    {n}: {line.strip()[:160]}" for n, line in h.lines[:max_lines]]
+        if len(h.lines) > max_lines:
+            out.append(f"    (+{len(h.lines) - max_lines} más)")
+    if rest:
+        nombres = ", ".join(f"{h.doc.name} ({len(h.lines)})" for h in rest[:25])
+        extra = f" y {len(rest) - 25} más" if len(rest) > 25 else ""
+        out += ["", f"Otros {len(rest)} doc(s) con menos coincidencias: {nombres}{extra}.",
+                "Para acotar: un patrón más preciso, fts=true (por relevancia) o "
+                "cairn_show con lineas= alrededor de una coincidencia."]
     if archivos:
         out += ["", f"archivos de scripts/ y validations/ ({len(archivos)}):"]
         for f in archivos:
@@ -163,12 +183,18 @@ def cairn_search(pattern: str, scope: Scope = "all", fts: bool = False) -> str:
     return "\n".join(out)
 
 
-def cairn_show(doc: str) -> str:
-    """Muestra un doc como archivo (front-matter + cuerpo). `doc@<hash>` o `doc@~N` muestra una
-    revisión anterior (ver cairn_log)."""
+def cairn_show(doc: str, seccion: str | None = None, lineas: str | None = None,
+               completo: bool = False) -> str:
+    """Muestra un doc como archivo (front-matter + cuerpo). Un doc largo (más de
+    `[mcp] show_max_chars`, 8000 por defecto) viene como índice: front-matter, título, TL;DR y
+    las secciones con sus líneas y tamaño. Para leer una parte: `seccion` (el comienzo del título,
+    p. ej. "Decisiones") o `lineas` ("40-80", con los números que da cairn_search), que vienen
+    numeradas; `completo=true` da el doc entero. `doc@<hash>` o `doc@~N` muestra una revisión
+    anterior (ver cairn_log)."""
     with _open() as store:
         _, text = history.show(store, doc)
-    return text
+        max_chars = store.config.show_max_chars
+    return lectura.vista(text, seccion, lineas, completo, max_chars)
 
 
 def cairn_new(area: str, tema: str, tipo: Literal["bug", "infra", "plan", "ref"] = "infra",
