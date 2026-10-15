@@ -661,3 +661,81 @@ def test_cli_huella_y_opciones_del_restore(pair, capsys):
     assert cli.main(["peers"]) == 0
     out = capsys.readouterr().out
     assert keys.fingerprint(laptop.pub) in out and "anterior" in out
+
+
+# ──────────────────────────────────────────────────────────────── disparo automático
+
+def test_toda_escritura_dispara_el_sync_y_la_lectura_no(pair, monkeypatch):
+    from cairn import sync
+    laptop, _ = pair
+    calls = []
+    monkeypatch.setattr(sync, "trigger", lambda cfg, delay=None: calls.append(delay))
+    doc = laptop.new("demo", "plan")
+    with laptop.store() as s:
+        edit.apply(s, doc.name, body="# editado\n")      # antes, editar no disparaba
+        docs.find(s, doc.name)
+        docs.all_docs(s)
+    assert calls == [None, None]
+
+
+def test_el_debounce_no_lanza_otro_si_ya_hay_uno_esperando(pair, monkeypatch):
+    from cairn import sync
+    laptop, _ = pair
+    laptop.use()
+    access.remote_add("vps", "ssh://cairn@vps.example")
+    monkeypatch.delenv("CAIRN_NO_AUTOSYNC")
+    cfg = config.load()
+    launched = []
+    monkeypatch.setattr(sync.subprocess, "Popen", lambda argv, **kw: launched.append(argv))
+    assert sync.trigger(cfg)
+    assert launched[-1][-4:] == ["sync", "--quiet", "--after", "5"]
+    with sync._flock(sync._wait_path(cfg), blocking=False) as got:   # alguien esperando
+        assert got
+        assert not sync.trigger(cfg)
+        assert not sync.wait_turn(cfg, 0.01)
+        assert sync.trigger(cfg, delay=0)                  # el del hook no espera
+    assert launched[-1][-2:] == ["sync", "--quiet"] and len(launched) == 2
+    assert sync.wait_turn(cfg, 0.01)
+
+
+def test_sin_remotos_o_con_auto_apagado_no_dispara(pair, monkeypatch):
+    from cairn import sync
+    laptop, _ = pair
+    laptop.use()
+    monkeypatch.delenv("CAIRN_NO_AUTOSYNC")
+    monkeypatch.setattr(sync.subprocess, "Popen", lambda *a, **kw: pytest.fail("no debía lanzar"))
+    assert not sync.trigger(config.load())                 # sin remotos
+    access.remote_add("vps", "ssh://cairn@vps.example")
+    config.update(lambda raw: raw.setdefault("sync", {}).update({"auto": "false"}))
+    assert not sync.trigger(config.load())
+
+
+def test_una_edicion_llega_sola_al_remoto(pair, tmp_path, monkeypatch):
+    """De punta a punta, con procesos de verdad: editar en laptop lanza `cairn sync --after`,
+    que espera el debounce y empuja por el ssh falso."""
+    import time
+
+    from cairn import integrate
+    laptop, vps = pair
+    fake = tmp_path / "fake_ssh.py"
+    fake.write_text(FAKE_SSH)
+    for k, v in vps.env().items():
+        monkeypatch.setenv(f"PEER_{k}", v)
+    monkeypatch.setenv("CAIRN_SSH", f"{sys.executable} {fake}")
+    monkeypatch.setattr(integrate, "default_command", lambda: [sys.executable, "-m", "cairn"])
+    doc = laptop.new("demo", "sesion_larga")               # todavía sin remoto: no viaja
+    laptop.use()
+    access.remote_add("vps", "ssh://cairn@vps.example")
+    config.update(lambda raw: raw.setdefault("sync", {}).update({"debounce": "0.3"}))
+    monkeypatch.delenv("CAIRN_NO_AUTOSYNC")
+    for i in range(3):                                      # una ráfaga de ediciones
+        with laptop.store() as s:
+            edit.apply(s, doc.name, body=f"# edición {i}\n")
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if doc.name in vps.names() and "# edición 2" in vps.body(doc.name):
+            break
+        time.sleep(0.2)
+    else:
+        log = (laptop.root / "data" / "sync.log")
+        pytest.fail(f"no llegó al vps; sync.log:\n{log.read_text() if log.exists() else '(vacío)'}")

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -46,6 +47,7 @@ import shlex
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -404,16 +406,59 @@ def auto_enabled(cfg: config.Config) -> bool:
     return bool(cfg.remotes) and cfg.sync_auto and not os.environ.get("CAIRN_NO_AUTOSYNC")
 
 
-def trigger(cfg: config.Config) -> bool:
-    """Lanza `cairn sync` en segundo plano (después de crear/cerrar un doc o crear/tomar un
-    handoff: en un nodo efímero, lo que no se empuja se puede perder). La salida va a
-    `<datos>/sync.log`. True si lo lanzó."""
+@contextlib.contextmanager
+def _flock(path: Path, blocking: bool):
+    """Lock exclusivo sobre `path`; sin `blocking`, da False si otro proceso lo tiene."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def _wait_path(cfg: config.Config) -> Path:
+    return cfg.data_dir / "sync-wait.lock"
+
+
+def running(cfg: config.Config):
+    """Un sync por vez en el nodo (los de las escrituras, el del hook y el del timer)."""
+    return _flock(cfg.data_dir / "sync-run.lock", blocking=True)
+
+
+def wait_turn(cfg: config.Config, delay: float) -> bool:
+    """El debounce: el proceso que toma el lock de espera aguarda `delay` segundos, lo suelta y
+    sincroniza. Mientras alguien espera, una escritura nueva no lanza otro proceso (ver
+    `trigger`): la cubre el que ya espera, porque lee el log recién después de soltar el lock.
+    False si otro proceso ya está esperando."""
+    with _flock(_wait_path(cfg), blocking=False) as got:
+        if got:
+            time.sleep(delay)
+        return got
+
+
+def trigger(cfg: config.Config, delay: float | None = None) -> bool:
+    """Lanza `cairn sync` en segundo plano después de cada escritura (`Store.writer`) y desde el
+    hook de fin de sesión: lo que no se empuja queda sólo en este nodo. Con `delay` (default
+    `[sync] debounce`) espera antes de sincronizar, para que una ráfaga de escrituras viaje
+    junta; si ya hay un proceso esperando, no lanza otro. La salida va a `<datos>/sync.log`.
+    True si lo lanzó."""
     if not auto_enabled(cfg):
         return False
+    delay = cfg.sync_debounce if delay is None else delay
+    if delay > 0:
+        with _flock(_wait_path(cfg), blocking=False) as free:
+            if not free:
+                return False
     from cairn.integrate import default_command
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    argv = [*default_command(), "sync", "--quiet"] + (["--after", f"{delay:g}"] if delay > 0 else [])
     with open(cfg.data_dir / "sync.log", "ab") as log:
-        subprocess.Popen([*default_command(), "sync", "--quiet"], stdin=subprocess.DEVNULL,
-                         stdout=log, stderr=log, start_new_session=True,
-                         cwd=str(Path.home()))
+        subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                         start_new_session=True, cwd=str(Path.home()))
     return True

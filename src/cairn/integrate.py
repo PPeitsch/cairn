@@ -1,4 +1,5 @@
 """`cairn integrate claude-code`: registra el MCP y los hooks de cairn en Claude Code.
+`cairn integrate systemd`: instala el timer de usuario que sincroniza cada tanto (ver `systemd`).
 
 - El MCP se registra con `claude mcp add --scope user` (el CLI de Claude Code): su config de
   usuario (`~/.claude.json`) es estado interno que Claude Code reescribe seguido, así que acá
@@ -307,4 +308,87 @@ def claude_code(command: list[str] | None = None, remove: bool = False, dry_run:
             _write_settings(path, data)
     if mcp:
         _apply_mcp(command, not remove, dry_run, report, settings.mcp_name)
+    return report
+
+
+# ──────────────────────────────────────────────────────────────── timer de systemd
+
+UNIT = "cairn-sync"
+
+
+def systemd_dir() -> Path:
+    v = os.environ.get("CAIRN_SYSTEMD_DIR")
+    if v:
+        return Path(v)
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "systemd" / "user"
+
+
+def systemd_units(command: list[str], interval: int) -> dict[str, str]:
+    return {
+        f"{UNIT}.service": (
+            "[Unit]\n"
+            "Description=cairn: sync con los remotos\n\n"
+            "[Service]\n"
+            "Type=oneshot\n"
+            f"ExecStart={shlex.join([*command, 'sync', '--quiet'])}\n"),
+        f"{UNIT}.timer": (
+            "[Unit]\n"
+            "Description=cairn: sync periódico (respaldo de los disparos de cada escritura)\n\n"
+            "[Timer]\n"
+            "OnBootSec=2min\n"
+            f"OnUnitActiveSec={interval}min\n"
+            "RandomizedDelaySec=30\n\n"
+            "[Install]\n"
+            "WantedBy=timers.target\n"),
+    }
+
+
+def _systemctl(*args: str) -> None:
+    found = shutil.which("systemctl")
+    if not found:
+        raise CairnError("No se encontró `systemctl`: el timer necesita systemd.")
+    r = subprocess.run([found, "--user", *args], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout).strip()
+        raise CairnError(f"`systemctl --user {' '.join(args)}` falló ({r.returncode}): {msg}")
+
+
+def systemd(command: list[str] | None = None, interval: int = 15, remove: bool = False,
+            dry_run: bool = False) -> Report:
+    """El respaldo de los disparos automáticos: un timer de usuario que corre `cairn sync` cada
+    `interval` minutos (`[sync] interval`). Cubre un push que falló (remoto caído, sin red), un
+    hook de fin de sesión que no corrió y la máquina apagada en el medio. Idempotente; `remove`
+    lo desactiva y borra las units. `CAIRN_SYSTEMD_DIR` cambia dónde se escriben."""
+    command = command or default_command()
+    d = systemd_dir()
+    report = Report()
+    if remove:
+        present = [n for n in systemd_units(command, interval) if (d / n).exists()]
+        if not present:
+            return report
+        report.actions.append(f"desactivar {UNIT}.timer y borrar {', '.join(present)}")
+        if not dry_run:
+            _systemctl("disable", "--now", f"{UNIT}.timer")
+            for n in present:
+                (d / n).unlink()
+            _systemctl("daemon-reload")
+        return report
+    changed = False
+    for name, text in systemd_units(command, interval).items():
+        path = d / name
+        cur = path.read_text(encoding="utf-8") if path.exists() else None
+        if cur == text:
+            report.unchanged.append(str(path))
+            continue
+        changed = True
+        report.actions.append(f"{'reescribir' if cur is not None else 'escribir'} {path}")
+        if not dry_run:
+            d.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+    if changed:
+        report.actions.append(f"activar {UNIT}.timer (cada {interval} min)")
+        if not dry_run:
+            _systemctl("daemon-reload")
+            _systemctl("enable", "--now", f"{UNIT}.timer")
     return report

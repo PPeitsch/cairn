@@ -20,7 +20,9 @@
     [claude_code]    mcp_name (default "cairn"), start_timeout (default 30), end_timeout (10)
     [sync]           auto = "true" | "false"   (sync en segundo plano y en los hooks; default true),
                      timeout (segundos por remoto, default 60), hook_timeout (el pull del hook
-                     de handoffs, default 15)
+                     de handoffs, default 15), debounce (segundos que espera el sync que dispara
+                     una escritura, para juntar una ráfaga en un solo viaje; default 5),
+                     interval (minutos entre syncs del timer de `integrate systemd`, default 15)
     [remotes.<n>]    url = "ssh://usuario@host[:puerto]", key (opcional), command (opcional)
     [peers.<nodo>]   key = "ssh-ed25519 AAAA…", ssh = "true" | "false", revoked = "<fecha>"
     [peers.<nodo>.old.<n>]  key, until: claves anteriores (`authorize --replace`); cada una
@@ -135,6 +137,8 @@ class Config:
     old_keys: tuple[OldKey, ...] = ()     # las claves anteriores de este mismo nodo
     sync_timeout: float = 60
     sync_hook_timeout: float = 15
+    sync_debounce: float = 5
+    sync_interval: int = 15
     handoff_stale_days: int = 14
     templates_dir: Path | None = None
     file_dirs: tuple[str, ...] = DEFAULT_FILE_DIRS
@@ -258,6 +262,8 @@ def load() -> Config:
         sync_auto=auto, old_keys=_old_keys(_table(raw, "node", path).get("old"), "node", path),
         sync_timeout=_num(sync, "timeout", 60.0, float, "sync", path),
         sync_hook_timeout=_num(sync, "hook_timeout", 15.0, float, "sync", path),
+        sync_debounce=_num(sync, "debounce", 5.0, float, "sync", path),
+        sync_interval=_num(sync, "interval", 15, int, "sync", path),
         handoff_stale_days=_num(docs, "handoff_stale_days", 14, int, "docs", path),
         templates_dir=_expand(docs["templates"]) if docs.get("templates") else None,
         file_dirs=_names(docs, "file_dirs", DEFAULT_FILE_DIRS),

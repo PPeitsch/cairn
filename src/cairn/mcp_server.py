@@ -18,7 +18,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cairn import __version__, config, docs, edit, history, lectura, sync, tree
+from cairn import __version__, config, docs, edit, history, lectura, tree
 from cairn.context import repo_of_path
 from cairn.store import CairnError, Store
 
@@ -206,7 +206,6 @@ def cairn_new(area: str, tema: str, tipo: Literal["bug", "infra", "plan", "ref"]
     Devuelve el nombre del doc y su contenido."""
     with _open() as store:
         r = docs.new(store, area, tema, tipo, _cwd_repo(store, repo))
-        sync.trigger(store.config)
         if body is not None:
             r = edit.apply(store, r.doc.id, body=body)
         return f"Creado: {r.doc.name}\n\n{docs.render(store, r.doc)}"
@@ -247,7 +246,6 @@ def cairn_close(doc: str, force: bool = False, descartar: str | None = None) -> 
     cairn_handoff_drop."""
     with _open() as store:
         r = docs.close(store, doc, force=force, descartar=descartar)
-        sync.trigger(store.config)
     return _con_avisos(f"Cerrado: {r.doc.name} ({r.doc.estado})", r.warnings)
 
 
@@ -325,7 +323,6 @@ def cairn_handoff_new(area: str, tema: str, body: str | None = None, para: list[
         warnings = r.warnings
         if body is not None:
             r = edit.apply(store, r.doc.id, body=body)
-        sync.trigger(store.config)
         return _con_avisos(f"Handoff creado: {r.doc.name}\n\n{docs.render(store, r.doc)}", warnings)
 
 
@@ -348,7 +345,6 @@ def cairn_handoff_take(nota: str | None = None, repo: str | None = None) -> str:
     se toma. Sin `nota`, la única pendiente para el repo de la conversación."""
     with _open() as store:
         r = docs.handoff_take(store, nota, _cwd_repo(store, repo))
-        sync.trigger(store.config)
     avisos = [f"[aviso] {a}" for a in r.warnings]
     return _con_avisos(f"Handoff tomado: {r.doc.name} (archivado, estado: usada)", avisos) \
         + "\n\n" + r.doc.body

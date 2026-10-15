@@ -46,6 +46,8 @@ cambia el formato de los eventos, así que dos nodos pueden tener configs distin
 | | `prune`, `max_depth` | `node_modules, .git, …`, `4` | qué no recorrer al buscar carpetas de docs adentro de repos |
 | `[sync]` | `auto` | `true` | sync en segundo plano y en los hooks |
 | | `timeout`, `hook_timeout` | `60`, `15` | segundos por remoto (a mano / en el hook de handoffs) |
+| | `debounce` | `5` | segundos que espera el sync que dispara una escritura, para que una ráfaga viaje junta |
+| | `interval` | `15` | minutos entre syncs del timer de `integrate systemd` |
 | `[mcp]` | `instructions` | (las de fábrica) | archivo con las instrucciones del servidor MCP |
 | | `show_max_chars` | `8000` | un doc más largo, `cairn_show` lo da como índice (TL;DR y secciones con sus líneas) |
 | | `search_max_docs`, `search_max_lines` | `15`, `3` | tope de lo que devuelve `cairn_search` con regex |
@@ -129,9 +131,20 @@ cairn revoke <nodo>                         # saca el acceso y rechaza sus event
 ```
 
 Con remotos configurados, el sync corre solo: el hook de handoffs trae lo nuevo antes de
-avisar, al cerrar la sesión se empuja en segundo plano, y lo mismo después de crear o cerrar un
-doc y de crear o tomar un handoff (salida en `<datos>/sync.log`). `[sync] auto = "false"` en la
-config lo apaga.
+avisar, y **cada escritura** (por el MCP o el CLI: crear, editar, cerrar, un handoff…) lanza un
+sync en segundo plano que espera `[sync] debounce` segundos, para que una ráfaga de ediciones
+viaje junta; al cerrar la sesión también se empuja. Un sync por vez en cada nodo, y la
+salida va a `<datos>/sync.log`. `[sync] auto = "false"` en la config lo apaga.
+
+Como respaldo de esos disparos (un push que falló porque el remoto no estaba, un hook que no
+corrió porque se cerró la ventana, la máquina apagada en el medio), un timer de systemd de
+usuario sincroniza cada `[sync] interval` minutos:
+
+```
+cairn integrate systemd [--dry-run]     # escribe cairn-sync.{service,timer} y lo activa
+cairn integrate systemd --remove        # lo desactiva y borra las units
+systemctl --user list-timers cairn-sync.timer
+```
 
 **Cambio de clave.** `cairn key --rotate` genera una clave nueva; la anterior queda en la config
 (`[node.old]`) y sigue verificando lo que ya firmó. En cada nodo que confía en este,
@@ -197,7 +210,8 @@ uvx ruff check src tests
 Los tests corren contra un nodo aislado en un temporal: `CAIRN_CONFIG_DIR`, `CAIRN_DATA_DIR` y
 `CAIRN_PROJECTS` cambian las rutas, y `CAIRN_NOW` fija el reloj. Para el sync,
 `CAIRN_AUTHORIZED_KEYS` cambia el `authorized_keys`, `CAIRN_SSH` el comando ssh (como `GIT_SSH`)
-y `CAIRN_NO_AUTOSYNC` apaga los disparadores.
+`CAIRN_NO_AUTOSYNC` apaga los disparadores y `CAIRN_SYSTEMD_DIR` cambia dónde
+`integrate systemd` escribe las units.
 
 ## Licencia
 

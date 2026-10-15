@@ -89,7 +89,6 @@ def cmd_new(args) -> int:
     with _open() as store:
         repo = args.repo if args.repo is not None else _cwd_repo(store)
         r = docs.new(store, args.area, args.tema, args.tipo, repo)
-    sync.trigger(store.config)
     print(r.doc.name)
     return 0
 
@@ -97,7 +96,6 @@ def cmd_new(args) -> int:
 def cmd_close(args) -> int:
     with _open() as store:
         r = docs.close(store, args.doc, force=args.force, descartar=args.descartar)
-    sync.trigger(store.config)
     print(f"Cerrado: {r.doc.name} ({r.doc.estado})")
     _warn_all(r.warnings)
     return 0
@@ -255,7 +253,6 @@ def cmd_handoff_new(args) -> int:
     with _open() as store:
         repo = args.repo if args.repo is not None else _cwd_repo(store)
         r = docs.handoff_new(store, args.area, args.tema, args.para, args.plan, repo)
-    sync.trigger(store.config)
     print(r.doc.name)
     _warn_all(r.warnings)
     return 0
@@ -264,7 +261,6 @@ def cmd_handoff_new(args) -> int:
 def cmd_handoff_take(args) -> int:
     with _open() as store:
         r = docs.handoff_take(store, args.nota, _cwd_repo(store))
-    sync.trigger(store.config)
     print(f"Handoff tomado: {r.doc.name} (archivado, estado: usada)")
     for a in r.warnings:
         print(f"[aviso] {a}")
@@ -448,9 +444,13 @@ def cmd_integrate(args) -> int:
     command = shlex.split(args.command) if args.command else None
     if command == []:
         raise CairnError("--command vacío")
-    rep = integrate.claude_code(command, remove=args.remove, dry_run=args.dry_run,
-                                mcp=not args.no_mcp, hooks=not args.no_hooks,
-                                replace_wip_doc=args.replace_wip_doc)
+    if args.target == "systemd":
+        rep = integrate.systemd(command, config.load().sync_interval, remove=args.remove,
+                                dry_run=args.dry_run)
+    else:
+        rep = integrate.claude_code(command, remove=args.remove, dry_run=args.dry_run,
+                                    mcp=not args.no_mcp, hooks=not args.no_hooks,
+                                    replace_wip_doc=args.replace_wip_doc)
     prefijo = "[dry-run] " if args.dry_run else ""
     for a in rep.actions:
         print(f"{prefijo}{a}")
@@ -533,9 +533,11 @@ def cmd_remote(args) -> int:
 
 def cmd_sync(args) -> int:
     if args.background:
-        sync.trigger(config.load())
+        sync.trigger(config.load(), delay=0)
         return 0
-    with _open() as store:
+    if args.after is not None and not sync.wait_turn(config.load(), args.after):
+        return 0        # ya hay otro esperando: ese sincroniza también lo de esta escritura
+    with sync.running(config.load()), _open() as store:
         if not store.config.remotes:
             if args.quiet:
                 return 0
@@ -695,8 +697,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("mcp", help="servidor MCP por stdio (lo lanza el agente, no se corre a mano)")
     p.set_defaults(func=cmd_mcp)
 
-    p = sub.add_parser("integrate", help="registra el MCP y los hooks de cairn en un agente")
-    p.add_argument("target", choices=["claude-code"])
+    p = sub.add_parser("integrate", help="registra el MCP y los hooks de cairn en un agente "
+                       "(claude-code) o el timer de sync periódico (systemd)")
+    p.add_argument("target", choices=["claude-code", "systemd"])
     p.add_argument("--remove", action="store_true", help="deshace la integración")
     p.add_argument("--dry-run", action="store_true", help="muestra qué haría, sin tocar nada")
     p.add_argument("--command", help="cómo invocar cairn (default: la ruta del comando; "
@@ -751,6 +754,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=float, help="segundos por remoto (default: `[sync] timeout`, 60)")
     p.add_argument("--background", action="store_true",
                    help="lanzarlo en segundo plano y volver (salida en <datos>/sync.log)")
+    p.add_argument("--after", type=float, metavar="SEG", help=argparse.SUPPRESS)  # el debounce
     p.add_argument("--restore", action="store_true",
                    help="traer también el log de este nodo (perdió sus datos y se reinicializó)")
     p.add_argument("--old-key", action="append", default=[], metavar="HUELLA",
