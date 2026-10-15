@@ -193,3 +193,36 @@ def test_reconoce_el_hook_de_wip_doc():
     assert not integrate._is_wip_doc_hook("/x/wip-doc/driver.py handoff list")
     assert not integrate._is_wip_doc_hook("/x/otro/driver.py handoff hook")
     assert not integrate._is_wip_doc_hook("/opt/cairn/bin/cairn handoff hook")
+
+
+# ──────────────────────────────────────────────────────────────── timer de systemd
+
+def test_systemd_instala_es_idempotente_y_se_saca(tmp_path, monkeypatch):
+    monkeypatch.setenv("CAIRN_SYSTEMD_DIR", str(tmp_path / "units"))
+    calls = []
+    monkeypatch.setattr(integrate, "_systemctl", lambda *a: calls.append(a))
+    cmd = ["/opt/cairn/bin/cairn"]
+    rep = integrate.systemd(cmd, interval=15)
+    service = (tmp_path / "units" / "cairn-sync.service").read_text()
+    timer = (tmp_path / "units" / "cairn-sync.timer").read_text()
+    assert "ExecStart=/opt/cairn/bin/cairn sync --quiet" in service
+    assert "OnUnitActiveSec=15min" in timer and "WantedBy=timers.target" in timer
+    assert calls == [("daemon-reload",), ("enable", "--now", "cairn-sync.timer")]
+    assert rep.actions[-1] == "activar cairn-sync.timer (cada 15 min)"
+
+    calls.clear()
+    rep = integrate.systemd(cmd, interval=15)                # de nuevo: nada que hacer
+    assert not rep.actions and len(rep.unchanged) == 2 and not calls
+
+    integrate.systemd(cmd, interval=10, dry_run=True)        # dry-run: no toca nada
+    assert "OnUnitActiveSec=15min" in (tmp_path / "units" / "cairn-sync.timer").read_text()
+    assert not calls
+
+    integrate.systemd(cmd, interval=10)                      # otro intervalo: reescribe el timer
+    assert "OnUnitActiveSec=10min" in (tmp_path / "units" / "cairn-sync.timer").read_text()
+
+    calls.clear()
+    rep = integrate.systemd(cmd, remove=True)
+    assert not list((tmp_path / "units").iterdir())
+    assert calls == [("disable", "--now", "cairn-sync.timer"), ("daemon-reload",)]
+    assert not integrate.systemd(cmd, remove=True).actions

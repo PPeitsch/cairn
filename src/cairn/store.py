@@ -2,7 +2,8 @@
 
 Toda escritura pasa por `Store.writer()`: toma el lock, pone la proyección al día con el log,
 deja armar los eventos (con su `prev` calculado contra el head actual de cada doc), los agrega
-al log y los proyecta. Si el bloque falla, no se escribe nada.
+al log y los proyecta. Si el bloque falla, no se escribe nada. Si escribió, dispara el sync en
+segundo plano (`sync.trigger`, con debounce).
 
 La proyección se pone al día sola (`catch_up`) leyendo lo que el log tiene después de la última
 posición proyectada; así un evento que llegó por sync, o uno que quedó escrito en el log pero no
@@ -187,6 +188,11 @@ class Store:
             if w.events:
                 self.log.append(w.events)
                 self.catch_up()
+        if w.events:
+            # toda escritura sale hacia los remotos, sea del MCP o del CLI: lo que no se empuja
+            # queda sólo en este nodo. Import tardío: sync depende de store.
+            from cairn import sync
+            sync.trigger(self.config)
 
     @contextmanager
     def receiving(self):
