@@ -87,6 +87,27 @@ def test_close_corta_con_pendientes_y_force(store, repo, capsys):
     assert "Cerrado con 1 pendiente" in err
 
 
+def test_close_descartar(store, repo, capsys):
+    run(capsys, "new", "a", "plan1", "plan")
+    fill(store, f"{HOY}_a_plan1", "- [ ]", "- [ ] fase 2")
+    assert "--descartar" in run(capsys, "close", f"{HOY}_a_plan1", ok=False).err
+    assert "pide un motivo" in run(capsys, "close", f"{HOY}_a_plan1", "--descartar", " ", ok=False).err
+
+    r = run(capsys, "close", f"{HOY}_a_plan1", "--descartar", "se rediseña entero")
+    assert "Cerrado con" not in r.err
+    doc = docs.find(store, f"{HOY}_a_plan1")
+    assert (doc.scope, doc.estado, doc.meta["cerrado"], doc.meta["nota"]) == \
+        ("done", "descartado", HOY, "se rediseña entero")
+
+    out = run(capsys, "weekly").out
+    assert "(1 descartado(s))" in out and "descartado" in out.split(doc.title)[1].splitlines()[0]
+    assert not docs.check(store)
+
+    run(capsys, "reopen", doc.name, "se retoma")
+    doc = docs.find(store, doc.name)
+    assert (doc.scope, doc.estado, doc.meta["nota"]) == ("wip", "en_progreso", "se retoma")
+
+
 def test_close_y_reopen(store, repo, capsys):
     run(capsys, "new", "a", "plan1", "plan")
     with store.writer() as w:

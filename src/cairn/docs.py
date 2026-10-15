@@ -223,7 +223,11 @@ def new(store: Store, area: str, tema: str, tipo: str = "infra", repo: str = "")
     return Result(get(store, doc_id))
 
 
-def close(store: Store, ref: str, force: bool = False) -> Result:
+def close(store: Store, ref: str, force: bool = False, descartar: str | None = None) -> Result:
+    """Cierra un doc terminado (resuelto/completado) o, con `descartar` (el motivo), uno que se
+    deja sin terminar: queda `descartado` con el motivo en `nota:` y no pide --force."""
+    if descartar is not None and not descartar.strip():
+        raise CairnError("Descartar pide un motivo: es lo único que va a explicar por qué quedó así.")
     warnings: list[str] = []
     with store.writer() as w:
         doc = find(store, ref)
@@ -237,19 +241,27 @@ def close(store: Store, ref: str, force: bool = False) -> Result:
         # un doc con checklist abierta no está cerrado: cerrarlo lo saca de `list` y lo reporta
         # en `weekly` como trabajo terminado, que es justo lo que no es
         pend = pending_items(doc.body)
-        if pend and not force:
+        if descartar:
+            if doc.meta.get("nota"):
+                warnings.append(f"[nota] Nota reemplazada por el motivo: \"{doc.meta['nota']}\"")
+            w.emit("close", doc.id, {"set": {"estado": "descartado", "cerrado": clock.today(),
+                                             "nota": descartar.strip()},
+                                     "unset": ["reabierto"]})
+        elif pend and not force:
             lines = "\n".join(f"    {n}: {t}" for n, t in pend[:10])
             raise CairnError(f"[aviso] {doc.name} tiene {len(pend)} pendiente(s) sin tildar:\n{lines}\n\n"
-                             f"Tildalos, borralos, o cerralo igual con: close {doc.name} --force")
-        if doc.meta.get("nota"):
-            # la nota describía el trabajo abierto ("baja prioridad", "reabierto por…"); cerrado, miente
-            warnings.append(f"[nota] Nota descartada al cerrar: \"{doc.meta['nota']}\" — si tenía info "
-                            "del cierre, pasala al cuerpo del doc.")
-        if pend:
-            warnings.append(f"[aviso] Cerrado con {len(pend)} pendiente(s) sin tildar (--force)")
-        estado = "completado" if doc.tipo == "plan" else "resuelto"
-        w.emit("close", doc.id, {"set": {"estado": estado, "cerrado": clock.today()},
-                                 "unset": ["nota", "reabierto"]})
+                             f"Tildalos, borralos, cerralo igual con: close {doc.name} --force, o, si "
+                             f"se deja sin terminar: close {doc.name} --descartar \"motivo\"")
+        else:
+            if doc.meta.get("nota"):
+                # la nota describía el trabajo abierto ("baja prioridad", "reabierto por…"); cerrado, miente
+                warnings.append(f"[nota] Nota descartada al cerrar: \"{doc.meta['nota']}\" — si tenía "
+                                "info del cierre, pasala al cuerpo del doc.")
+            if pend:
+                warnings.append(f"[aviso] Cerrado con {len(pend)} pendiente(s) sin tildar (--force)")
+            estado = "completado" if doc.tipo == "plan" else "resuelto"
+            w.emit("close", doc.id, {"set": {"estado": estado, "cerrado": clock.today()},
+                                     "unset": ["nota", "reabierto"]})
     return Result(get(store, doc.id), warnings)
 
 

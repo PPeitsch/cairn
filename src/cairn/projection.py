@@ -31,7 +31,7 @@ from cairn.events import CREATE_OPS, Event
 SCHEMA_VERSION = 1
 
 # estados que dejan el doc cerrado (en el árbol de wip-doc: `_done/`)
-CERRADOS = frozenset({"resuelto", "completado", "archivado", "usada", "descartada"})
+CERRADOS = frozenset({"resuelto", "completado", "descartado", "archivado", "usada", "descartada"})
 ABIERTOS = frozenset({"en_progreso", "en_monitoreo", "propuesto", "pendiente"})
 
 _SCHEMA = """

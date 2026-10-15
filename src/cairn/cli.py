@@ -96,7 +96,7 @@ def cmd_new(args) -> int:
 
 def cmd_close(args) -> int:
     with _open() as store:
-        r = docs.close(store, args.doc, force=args.force)
+        r = docs.close(store, args.doc, force=args.force, descartar=args.descartar)
     sync.trigger(store.config)
     print(f"Cerrado: {r.doc.name} ({r.doc.estado})")
     _warn_all(r.warnings)
@@ -221,7 +221,9 @@ def cmd_weekly(args) -> int:
     cuenta = {k: sum(1 for d in cerrados if d.tipo == k) for k in ("bug", "infra", "plan")}
     partes = [f"{docs.ICON[k]} {n} {lbl}" for k, lbl in (("bug", "bugs"), ("infra", "diagnósticos"),
                                                          ("plan", "planes")) if (n := cuenta[k])]
-    print(f"Semana {fmt_date(since)} – {fmt_date(hoy)} {hoy[:4]}  ·  {total} trabajos cerrados")
+    descartados = sum(1 for d in cerrados if d.estado == "descartado")
+    print(f"Semana {fmt_date(since)} – {fmt_date(hoy)} {hoy[:4]}  ·  {total} trabajos cerrados"
+          + (f" ({descartados} descartado(s))" if descartados else ""))
     if partes:
         print("   " + " · ".join(partes))
     current = None
@@ -231,7 +233,8 @@ def cmd_weekly(args) -> int:
             n = sum(1 for x in cerrados if docs.repo_label(x) == repo)
             print(f"\n━━━━━  {repo}  ({n})  ━━━━━\n")
             current = repo
-        print(f"  {docs.ICON[d.tipo]}  {d.title}   ·   {fmt_date(d.date_closed())}")
+        marca = "   ·   descartado" if d.estado == "descartado" else ""
+        print(f"  {docs.ICON[d.tipo]}  {d.title}   ·   {fmt_date(d.date_closed())}{marca}")
         print(f"      {first_sentences(d.tldr, 2) or '(sin TL;DR)'}\n")
     return 0
 
@@ -597,9 +600,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--repo", help="a qué repo pertenece (default: el del PWD; `varios` si es cross-repo)")
     p.set_defaults(func=cmd_new)
 
-    p = sub.add_parser("close", help="cierra un doc (estado resuelto/completado + `cerrado:`)")
+    p = sub.add_parser("close", help="cierra un doc (estado resuelto/completado/descartado + `cerrado:`)")
     p.add_argument("doc")
     p.add_argument("-f", "--force", action="store_true", help="cerrar aunque queden `- [ ]` sin tildar")
+    p.add_argument("--descartar", metavar="MOTIVO", help="cerrarlo sin terminar: estado `descartado`, "
+                   "el motivo en `nota:` (no pide --force)")
     p.set_defaults(func=cmd_close)
 
     p = sub.add_parser("reopen", help="reabre un doc cerrado (o vuelve un handoff a pendiente)")

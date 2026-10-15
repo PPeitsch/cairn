@@ -239,12 +239,14 @@ def cairn_edit(doc: str, old_text: str | None = None, new_text: str | None = Non
     return _con_avisos(f"{estado}: {r.doc.name}", r.warnings)
 
 
-def cairn_close(doc: str, force: bool = False) -> str:
+def cairn_close(doc: str, force: bool = False, descartar: str | None = None) -> str:
     """Cierra un diagnóstico o plan (estado resuelto/completado + fecha de cierre). Falla si quedan
-    `- [ ]` sin tildar, salvo `force=true`. Las referencias no se cierran y los handoffs se
-    archivan con cairn_handoff_take / cairn_handoff_drop."""
+    `- [ ]` sin tildar, salvo `force=true`. Si se deja sin terminar (se abandona, deja de tener
+    sentido), `descartar` con el motivo: queda `descartado`, el motivo en `nota:`, y no pide
+    `force`. Las referencias no se cierran y los handoffs se archivan con cairn_handoff_take /
+    cairn_handoff_drop."""
     with _open() as store:
-        r = docs.close(store, doc, force=force)
+        r = docs.close(store, doc, force=force, descartar=descartar)
         sync.trigger(store.config)
     return _con_avisos(f"Cerrado: {r.doc.name} ({r.doc.estado})", r.warnings)
 
@@ -276,7 +278,8 @@ def cairn_weekly(dias: int = 7) -> str:
         return f"Nada cerrado desde {since}."
     out = [f"{len(cerrados)} doc(s) cerrado(s) desde {since}:"]
     for d in cerrados:
-        out += ["", f"{d.title}  [{d.tipo} · cerrado {d.date_closed()} · {docs.repo_label(d)}]",
+        cierre = "descartado" if d.estado == "descartado" else "cerrado"
+        out += ["", f"{d.title}  [{d.tipo} · {cierre} {d.date_closed()} · {docs.repo_label(d)}]",
                 d.tldr or "(sin TL;DR)"]
     return "\n".join(out)
 
