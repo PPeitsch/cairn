@@ -63,6 +63,9 @@ def test_ciclo_de_vida(node):
     assert plano.startswith("2026-03-10_demo_BUG_lento  [bug · cerrado") and "modificado" in plano
     assert "Sin docs en wip" in ok("cairn_list")
     assert "Reabierto" in ok("cairn_reopen", {"doc": "2026-03-10_demo_BUG_lento", "motivo": "volvió"})
+    r = ok("cairn_close", {"doc": "2026-03-10_demo_BUG_lento", "descartar": "no se reproduce"})
+    assert "(descartado)" in r
+    assert "[bug · descartado 2026-03-10" in ok("cairn_weekly")
 
 
 def test_new_con_cuerpo_y_busqueda(node):

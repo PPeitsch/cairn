@@ -72,6 +72,7 @@ cairn import ~/projects                     # una vez: los docs de _wip/_done/_r
 cairn new bcra rate_limit_429 bug           # diagnóstico; también infra (default), plan, ref
 cairn edit <doc>                            # en $EDITOR; o --stdin / --file / --set k=v / --unset k
 cairn close <doc> [--force]                 # corta si quedan `- [ ]` sin tildar
+cairn close <doc> --descartar "motivo"      # sin terminar: estado `descartado`, motivo en `nota:`
 cairn reopen <doc> [motivo]
 cairn promote <doc> <area> <tema> [--seccion S]...   # secciones a una referencia, vinculadas
 
