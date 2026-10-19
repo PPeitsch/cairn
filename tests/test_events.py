@@ -7,7 +7,7 @@ H = "a" * 64
 
 def make(**kw):
     base = {"node": "laptop", "ts": "2026-03-10T12:00:00.000000+00:00", "op": "create", "doc_id": "d1",
-            "payload": {"name": "x", "meta": {"tipo": "plan"}, "body": "# x\n"}, "prev": None}
+            "payload": {"name": "x", "meta": {"type": "plan"}, "body": "# x\n"}, "prev": None}
     return Event.new(**{**base, **kw})
 
 
@@ -37,7 +37,7 @@ def test_roundtrip_json():
 
 
 def test_tampered_payload_is_detected():
-    line = make().to_json().replace('"tipo":"plan"', '"tipo":"bug"')
+    line = make().to_json().replace('"type":"plan"', '"type":"bug"')
     with pytest.raises(EventError, match="does not match"):
         Event.from_json(line)
 
@@ -64,5 +64,5 @@ def test_unknown_op_and_bad_node():
 
 def test_unknown_fields_are_rejected():
     line = make().to_json()[:-1] + ',"extra":1}'
-    with pytest.raises(EventError, match="desconocidos"):
+    with pytest.raises(EventError, match="unknown fields"):
         Event.from_json(line)

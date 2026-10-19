@@ -99,9 +99,9 @@ class Event:
         if self.op not in OPS:
             raise EventError(f"unknown operation: {self.op!r}")
         if not isinstance(self.doc_id, str) or not self.doc_id:
-            raise EventError("falta doc_id")
+            raise EventError("missing doc_id")
         if not isinstance(self.ts, str) or not self.ts:
-            raise EventError("falta ts")
+            raise EventError("missing ts")
         if not isinstance(self.payload, dict):
             raise EventError("payload has to be an object")
         _check_json(self.payload)
@@ -130,7 +130,7 @@ class Event:
         known = {"v", "node", "ts", "op", "doc_id", "payload", "prev", "sig", "id"}
         extra = set(d) - known
         if extra:
-            raise EventError(f"campos desconocidos: {', '.join(sorted(extra))}")
+            raise EventError(f"unknown fields: {', '.join(sorted(extra))}")
         try:
             ev = cls(**d)
         except TypeError as e:

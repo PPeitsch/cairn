@@ -44,7 +44,7 @@ def test_tools_and_instructions(node):
 
 
 def test_lifecycle(node):
-    text = ok("cairn_new", {"area": "demo", "tema": "lento", "tipo": "bug"})
+    text = ok("cairn_new", {"area": "demo", "topic": "lento", "type": "bug"})
     assert "Created: 2026-03-10_demo_BUG_lento" in text
     assert "repo: demo" in text                       # comes from the conversation's directory
 
@@ -59,18 +59,18 @@ def test_lifecycle(node):
     listado = ok("cairn_list", {"scope": "done"})
     assert listado.startswith("1 doc(s) in 1 repo(s)") and "demo (1)" in listado
     assert "modified 2026-03-10, today" in listado
-    plano = ok("cairn_list", {"scope": "done", "por_repo": False})
+    plano = ok("cairn_list", {"scope": "done", "by_repo": False})
     assert plano.startswith("2026-03-10_demo_BUG_lento  [bug · closed") and "modified" in plano
     assert "No docs in wip" in ok("cairn_list")
-    assert "Reopened" in ok("cairn_reopen", {"doc": "2026-03-10_demo_BUG_lento", "motivo": "volvió"})
-    r = ok("cairn_close", {"doc": "2026-03-10_demo_BUG_lento", "descartar": "no se reproduce"})
-    assert "(descartado)" in r
+    assert "Reopened" in ok("cairn_reopen", {"doc": "2026-03-10_demo_BUG_lento", "reason": "volvió"})
+    r = ok("cairn_close", {"doc": "2026-03-10_demo_BUG_lento", "discard": "no se reproduce"})
+    assert "(discarded)" in r
     assert "[bug · discarded 2026-03-10" in ok("cairn_weekly")
 
 
 def test_new_with_body_and_search(node):
     body = "---\n\n# Raro\n\n## TL;DR\n\nUn cuerpo que empieza con una regla horizontal.\n"
-    ok("cairn_new", {"area": "demo", "tema": "raro", "body": body})
+    ok("cairn_new", {"area": "demo", "topic": "raro", "body": body})
     shown = ok("cairn_show", {"doc": "2026-03-10_demo_raro"})
     assert shown.endswith(body)
     assert "regla horizontal" in ok("cairn_search", {"pattern": "regla"})
@@ -80,7 +80,7 @@ def test_new_with_body_and_search(node):
 
 
 def test_edit_old_text_ambiguous_or_missing(node):
-    ok("cairn_new", {"area": "demo", "tema": "x", "body": "# X\n\nuno uno\n"})
+    ok("cairn_new", {"area": "demo", "topic": "x", "body": "# X\n\nuno uno\n"})
     err, text = call("cairn_edit", {"doc": "2026-03-10_demo_x", "old_text": "uno", "new_text": "dos"})
     assert err and "2 times" in text
     err, text = call("cairn_edit", {"doc": "2026-03-10_demo_x", "old_text": "tres", "new_text": "dos"})
@@ -90,10 +90,10 @@ def test_edit_old_text_ambiguous_or_missing(node):
 
 
 def test_edit_does_not_cross_status_groups(node):
-    ok("cairn_new", {"area": "demo", "tema": "x"})
-    err, text = call("cairn_edit", {"doc": "2026-03-10_demo_x", "set_fields": {"estado": "resuelto"}})
+    ok("cairn_new", {"area": "demo", "topic": "x"})
+    err, text = call("cairn_edit", {"doc": "2026-03-10_demo_x", "set_fields": {"status": "resolved"}})
     assert err and "close / reopen" in text
-    assert "Saved" in ok("cairn_edit", {"doc": "2026-03-10_demo_x", "set_fields": {"nota": "ojo"}})
+    assert "Saved" in ok("cairn_edit", {"doc": "2026-03-10_demo_x", "set_fields": {"note": "ojo"}})
 
 
 def test_errors_are_tool_errors(node):
@@ -107,8 +107,8 @@ def test_without_init(env, monkeypatch):
 
 
 def test_handoffs(node, cfg):
-    ok("cairn_new", {"area": "demo", "tema": "plan_x", "tipo": "plan"})
-    text = ok("cairn_handoff_new", {"area": "demo", "tema": "seguir", "plan": ["2026-03-10_demo_plan_x"],
+    ok("cairn_new", {"area": "demo", "topic": "plan_x", "type": "plan"})
+    text = ok("cairn_handoff_new", {"area": "demo", "topic": "seguir", "plan": ["2026-03-10_demo_plan_x"],
                                     "body": "# Seguir\n\n## TL;DR\n\nSeguir con el plan.\n"})
     assert "Handoff created: 2026-03-10_demo_HANDOFF_seguir" in text
     assert "plan:\n  - ../_wip/2026-03-10_demo_plan_x.md" in text
@@ -116,18 +116,18 @@ def test_handoffs(node, cfg):
     assert "No pending handoffs for otro" in ok("cairn_handoff_list", {"repo": "otro"})
     taken = ok("cairn_handoff_take")
     assert "Handoff taken" in taken and "Seguir con el plan." in taken
-    err, text = call("cairn_handoff_take", {"nota": "2026-03-10_demo_HANDOFF_seguir"})
+    err, text = call("cairn_handoff_take", {"note": "2026-03-10_demo_HANDOFF_seguir"})
     assert err and "is no longer pending" in text
     with Store(cfg) as store:
-        assert docs.find(store, "2026-03-10_demo_HANDOFF_seguir").estado == "usada"
+        assert docs.find(store, "2026-03-10_demo_HANDOFF_seguir").status == "taken"
 
 
 def test_promote_log_diff_weekly_check(node):
     body = ("# Bug\n\n## TL;DR\n\nSe arregló el bug.\n\n## Contexto / topología\n\nUn server.\n\n"
             "## Comandos útiles de referencia\n\n```\nls\n```\n")
-    ok("cairn_new", {"area": "demo", "tema": "b", "tipo": "bug", "body": body})
+    ok("cairn_new", {"area": "demo", "topic": "b", "type": "bug", "body": body})
     ok("cairn_close", {"doc": "2026-03-10_demo_BUG_b"})
-    text = ok("cairn_promote", {"doc": "2026-03-10_demo_BUG_b", "area": "demo", "tema": "server"})
+    text = ok("cairn_promote", {"doc": "2026-03-10_demo_BUG_b", "area": "demo", "topic": "server"})
     assert text.startswith("demo_server") and "Contexto / topología" in text   # Spanish docs too
     log = ok("cairn_log", {"doc": "2026-03-10_demo_BUG_b"})
     assert "close" in log and "create" in log
@@ -138,20 +138,20 @@ def test_promote_log_diff_weekly_check(node):
 
 def test_bounded_reading(node, monkeypatch):
     largo = "## TL;DR\n\nResumen.\n\n## Detalle\n\n" + "linea de relleno con costo\n" * 400
-    ok("cairn_new", {"area": "demo", "tema": "largo", "tipo": "plan", "body": "# demo largo\n\n" + largo})
+    ok("cairn_new", {"area": "demo", "topic": "largo", "type": "plan", "body": "# demo largo\n\n" + largo})
     idx = ok("cairn_show", {"doc": "2026-03-10_demo_largo"})
     assert "this is the outline, not the doc" in idx and "Resumen." in idx and "## Detalle  (lines" in idx
     assert idx.count("relleno") == 0
-    assert ok("cairn_show", {"doc": "2026-03-10_demo_largo", "completo": True}).count("relleno") == 400
-    sec = ok("cairn_show", {"doc": "2026-03-10_demo_largo", "seccion": "Detalle"})
+    assert ok("cairn_show", {"doc": "2026-03-10_demo_largo", "full": True}).count("relleno") == 400
+    sec = ok("cairn_show", {"doc": "2026-03-10_demo_largo", "section": "Detalle"})
     assert sec.startswith("(section «Detalle»") and sec.count("relleno") == 400
-    assert ok("cairn_show", {"doc": "2026-03-10_demo_largo", "lineas": "1-3"}).startswith("(lines 1-3")
-    err, text = call("cairn_show", {"doc": "2026-03-10_demo_largo", "seccion": "nada"})
+    assert ok("cairn_show", {"doc": "2026-03-10_demo_largo", "lines": "1-3"}).startswith("(lines 1-3")
+    err, text = call("cairn_show", {"doc": "2026-03-10_demo_largo", "section": "nada"})
     assert err and "Sections:" in text
 
     # capped regex: docs with the most hits first, the rest by name
     for i in range(3):
-        ok("cairn_new", {"area": "demo", "tema": f"chico{i}", "body": f"# chico {i}\n\ncosto\n"})
+        ok("cairn_new", {"area": "demo", "topic": f"chico{i}", "body": f"# chico {i}\n\ncosto\n"})
     from cairn import config
     config.update(lambda raw: raw.setdefault("mcp", {}).update(
         {"search_max_docs": "2", "search_max_lines": "2"}))

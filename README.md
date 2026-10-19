@@ -8,9 +8,9 @@ over ssh, git style, and agents access it through MCP stdio.
 > Code integration, ssh sync with signed events, and the migration from wip-doc. Still to do, if
 > needed: an HTTPS transport for cloud nodes without outbound ssh.
 
-> The front-matter field names and values (`tipo`, `estado: en_progreso`, `nota`, …) and some
-> command flags (`--descartar`, `--seccion`, …) are still in Spanish. Moving them to English,
-> with the Spanish ones still read, is under way.
+> cairn started out in Spanish. Logs written back then carry Spanish field names and statuses
+> (`tipo`, `estado: en_progreso`, `nota`, …): they are read as aliases of the English ones,
+> forever, since the log is never rewritten. Everything new is written in English.
 
 ## How it works
 
@@ -77,19 +77,19 @@ cairn init                                  # config, data and empty database (n
 cairn new bcra rate_limit_429 bug           # a diagnosis; also infra (default), plan, ref
 cairn edit <doc>                            # in $EDITOR; or --stdin / --file / --set k=v / --unset k
 cairn close <doc> [--force]                 # stops if unchecked `- [ ]` items remain
-cairn close <doc> --descartar "reason"      # unfinished: status `descartado`, reason in `nota:`
+cairn close <doc> --discard "reason"        # unfinished: status `discarded`, reason in `note:`
 cairn reopen <doc> [reason]
-cairn promote <doc> <area> <topic> [--seccion S]...   # sections to a reference, linked
+cairn promote <doc> <area> <topic> [--section S]...   # sections to a reference, linked
 
-cairn list [wip|done|ref|all] [--por-repo]  # by repo: with counts and date of the last change
+cairn list [wip|done|ref|all] [--by-repo]   # by repo: with counts and date of the last change
 cairn search <regex> [scope]                # or --fts <query> by relevance
-cairn weekly [days] [resumen|full]
+cairn weekly [days] [summary|full]
 cairn check                                 # log, projection and docs in order (exits 1 if not)
 
-cairn handoff new <area> <topic> [--para R]... [--plan <doc>]...
+cairn handoff new <area> <topic> [--to R]... [--plan <doc>]...
 cairn handoff take [<note>] | drop <note> [reason] | list [--all] | hook
 
-cairn show <doc>[@rev] [--seccion S | --lineas A-B]   # rev: hash prefix or ~N
+cairn show <doc>[@rev] [--section S | --lines A-B]    # rev: hash prefix or ~N
 cairn log [<doc>] [-n N]
 cairn diff <doc> [rev_a] [rev_b]            # default: the last change
 cairn rebuild                               # rebuilds the SQLite database from the log
@@ -196,7 +196,7 @@ conventions for when and how to document.
 
 A doc is referred to by its name (`2026-10-04_cairn_arquitectura`, with or without `.md`) or by a
 prefix of its id. There are no folders: whether a doc is open, closed or a reference is given by
-its type and status, and links (`origen`, `referencias`, `plan`) are stored by id.
+its type and status, and links (`origin`, `references`, `plan`) are stored by id.
 It is shown as `_wip/<name>.md`, `_done/<name>.md` or `_ref/<name>.md` (open, closed,
 reference), and links between docs are rendered as relative paths from there.
 
@@ -222,7 +222,8 @@ cairn migrate wip-doc unhook [--dry-run]              # removes wip-doc's hook f
 cairn migrate wip-doc export <dest> [scope] [--force] # cairn's docs back as that tree
 ```
 
-Importing twice duplicates nothing, and `export` of what was imported reproduces the files.
+Importing twice duplicates nothing, and `export` of what was imported reproduces the files,
+with wip-doc's Spanish front-matter in cairn's vocabulary.
 
 ## Development
 

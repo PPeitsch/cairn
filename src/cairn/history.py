@@ -34,7 +34,7 @@ def revisions(store: Store, doc: Doc) -> list[Rev]:
         meta, links = json.loads(r["meta"]), json.loads(r["links"])
         st = DocState(name=r["name"], meta=meta, body=r["body"], links=links)
         snap = Doc(id=doc.id, name=r["name"], meta=meta, body=r["body"], scope=st.scope,
-                   head=r["event_id"], created=doc.created, updated=r["ts"], divergent=False, links=links)
+                   head=r["event_id"], created=doc.created, last_event=r["ts"], divergent=False, links=links)
         out.append(Rev(r["event_id"], r["seq"], r["ts"], r["node"], r["op"], snap))
     return out
 
@@ -202,7 +202,7 @@ def resolve(store: Store, ref: str, keep: str) -> tuple[Doc, int]:
 
 def branch_diff(store: Store, doc: Doc, b: Branch) -> str:
     snap = Doc(id=doc.id, name=b.state.name, meta=b.state.meta, body=b.state.body, scope=b.state.scope,
-               head=b.tip.id, created=doc.created, updated=b.tip.ts, divergent=True, links=b.state.links)
+               head=b.tip.id, created=doc.created, last_event=b.tip.ts, divergent=True, links=b.state.links)
     ta, tb = docs.render(store, doc), docs.render(store, snap)
     return "".join(difflib.unified_diff(
         ta.splitlines(keepends=True), tb.splitlines(keepends=True),

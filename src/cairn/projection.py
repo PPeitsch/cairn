@@ -6,7 +6,7 @@ Tables:
   it ended up on a branch that is not the main one, `resolved` if it belongs to a branch a
   `resolve` already settled, `orphan` if its `prev` has not arrived).
 - `docs`: the current state of each doc (front-matter in `meta`, body in `body`).
-- `links`: the links between docs (`origen`, `referencias`, `plan`), by id.
+- `links`: the links between docs (`origin`, `references`, `plan`), by id.
 - `revisions`: the state after each event of the main chain (history, diff, show).
 - `docs_fts`: FTS5 index over name, title and body.
 - `log_pos`: up to which byte of each log segment has already been projected.
@@ -14,6 +14,9 @@ Tables:
 A doc's state is a deterministic function of the set of its events: every time one arrives, the
 whole doc is projected again. So the order they arrived in does not matter, and a `rebuild` from
 the log reaches the same result as the incremental projection.
+
+The state always uses the canonical vocabulary: events written with the old (Spanish) names are
+translated when they are folded (`vocab`), so the tables never see them.
 """
 
 from __future__ import annotations
@@ -26,13 +29,14 @@ from dataclasses import dataclass, field
 from operator import attrgetter
 from pathlib import Path
 
+from cairn import vocab
 from cairn.events import CREATE_OPS, Event
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # statuses that leave the doc closed (the `done` scope)
-CLOSED_STATES = frozenset({"resuelto", "completado", "descartado", "archivado", "usada", "descartada"})
-OPEN_STATES = frozenset({"en_progreso", "en_monitoreo", "propuesto", "pendiente"})
+CLOSED_STATES = frozenset({"resolved", "completed", "discarded", "archived", "taken", "dropped"})
+OPEN_STATES = frozenset({"in_progress", "monitoring", "proposed", "pending"})
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS info (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -47,9 +51,9 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_doc ON events (doc_id);
 CREATE TABLE IF NOT EXISTS docs (
-    id TEXT PRIMARY KEY, name TEXT NOT NULL, tipo TEXT, repo TEXT, estado TEXT,
-    scope TEXT NOT NULL, fecha TEXT, closed TEXT, title TEXT, meta TEXT NOT NULL,
-    body TEXT NOT NULL, head TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL,
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT, repo TEXT, status TEXT,
+    scope TEXT NOT NULL, date TEXT, closed TEXT, title TEXT, meta TEXT NOT NULL,
+    body TEXT NOT NULL, head TEXT NOT NULL, created TEXT NOT NULL, last_event TEXT NOT NULL,
     divergent INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS docs_name ON docs (name);
@@ -67,6 +71,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5 (
     doc_id UNINDEXED, name, title, body, tokenize = 'unicode61 remove_diacritics 2'
 );
 """
+_TABLES = ("log_pos", "events", "docs", "links", "revisions", "docs_fts")
 
 
 # ──────────────────────────────────────────────────────────────── reducer
@@ -79,24 +84,24 @@ class DocState:
     links: list[list[str]] = field(default_factory=list)   # [[kind, doc_id], …]
 
     @property
-    def tipo(self) -> str:
-        return str(self.meta.get("tipo", ""))
+    def type(self) -> str:
+        return str(self.meta.get("type", ""))
 
     @property
-    def estado(self) -> str:
-        return str(self.meta.get("estado", ""))
+    def status(self) -> str:
+        return str(self.meta.get("status", ""))
 
     @property
     def scope(self) -> str:
         """`ref`, `done` or `wip`: what `list` and `search` filter by."""
-        if self.tipo == "ref":
+        if self.type == "ref":
             return "ref"
-        return "done" if self.estado in CLOSED_STATES else "wip"
+        return "done" if self.status in CLOSED_STATES else "wip"
 
     @property
     def closed(self) -> str | None:
         # a handoff is not closed: it is taken or dropped, and that date acts as the closing date
-        for k in ("cerrado", "usada", "descartada"):
+        for k in ("closed", "taken", "dropped"):
             if self.meta.get(k):
                 return str(self.meta[k])
         return None
@@ -116,8 +121,10 @@ def fold(state: DocState | None, ev: Event) -> DocState:
         set / unset   front-matter fields that change / that are removed
         link_add      [[kind, doc_id], …] links that are added
         link_remove   same, links that are removed
+
+    The payload is read in the canonical vocabulary, whichever one it was written with.
     """
-    p = ev.payload
+    p = vocab.payload(ev.payload)
     if ev.op in CREATE_OPS:
         new = DocState(name=p["name"], meta=dict(p.get("meta") or {}), body=p.get("body", ""),
                        links=[list(x) for x in p.get("links") or []])
@@ -188,14 +195,17 @@ class Projection:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode = WAL")
-        self.db.executescript(_SCHEMA)
+        self.db.execute(_SCHEMA.split(";")[0])          # `info`, to read the version first
         row = self.db.execute("SELECT value FROM info WHERE key = 'schema'").fetchone()
-        if row is None:
+        if row is not None and int(row["value"]) != SCHEMA_VERSION:
+            # the projection is disposable: with another schema its tables are dropped (emptying
+            # them is not enough: they keep the old columns) and it is rebuilt from the log
             with self.db:
-                self.db.execute("INSERT INTO info VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
-        elif int(row["value"]) != SCHEMA_VERSION:
-            # the projection is disposable: with another schema it is rebuilt from the log
-            self.reset()
+                for t in _TABLES:
+                    self.db.execute(f"DROP TABLE IF EXISTS {t}")
+        self.db.executescript(_SCHEMA)
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO info VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
 
     def close(self) -> None:
         self.db.close()
@@ -203,7 +213,7 @@ class Projection:
     def reset(self) -> None:
         """Empties the projection (the log is not touched)."""
         with self.db:
-            for t in ("log_pos", "events", "docs", "links", "revisions", "docs_fts"):
+            for t in _TABLES:
                 self.db.execute(f"DELETE FROM {t}")
             self.db.execute("INSERT OR REPLACE INTO info VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
 
@@ -252,11 +262,11 @@ class Projection:
         if not main:
             return
         state: DocState | None = None
-        updated = main[0].ts
+        last_event = main[0].ts
         for seq, ev in enumerate(main):
             state = fold(state, ev)
             # an imported doc keeps when it was last touched in the source tree
-            updated = (ev.payload.get("updated") or ev.ts) if ev.op == "import" else ev.ts
+            last_event = (ev.payload.get("updated") or ev.ts) if ev.op == "import" else ev.ts
             db.execute(
                 "INSERT INTO revisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (ev.id, doc_id, seq, ev.ts, ev.node, ev.op, state.name,
@@ -265,10 +275,10 @@ class Projection:
         assert state is not None
         db.execute(
             "INSERT INTO docs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (doc_id, state.name, state.tipo, str(state.meta.get("repo") or ""), state.estado,
-             state.scope, str(state.meta.get("fecha") or ""), state.closed, state.title,
+            (doc_id, state.name, state.type, str(state.meta.get("repo") or ""), state.status,
+             state.scope, str(state.meta.get("date") or ""), state.closed, state.title,
              json.dumps(state.meta, ensure_ascii=False), state.body, main[-1].id,
-             main[0].ts, updated, 1 if divergent else 0))
+             main[0].ts, last_event, 1 if divergent else 0))
         db.executemany("INSERT OR IGNORE INTO links VALUES (?, ?, ?)",
                        [(doc_id, kind, dst) for kind, dst in state.links])
         db.execute("INSERT INTO docs_fts (doc_id, name, title, body) VALUES (?, ?, ?, ?)",

@@ -9,12 +9,12 @@ from cairn.markdown import (
 
 
 def test_front_matter_roundtrip():
-    meta = {"tipo": "ref", "nota": "falta: el GRANT # ojo", "origen": ["../_done/a.md", "../_wip/b.md"],
-            "estado": "true", "extra": "x"}
+    meta = {"type": "ref", "note": "falta: el GRANT # ojo", "origin": ["../_done/a.md", "../_wip/b.md"],
+            "status": "true", "extra": "x"}
     text = dump_front_matter(meta) + "# t\n"
     back, body = parse_front_matter(text)
     assert back == meta and body == "# t\n"
-    assert text.index("tipo") < text.index("estado") < text.index("origen") < text.index("extra")
+    assert text.index("type") < text.index("status") < text.index("origin") < text.index("extra")
 
 
 def test_without_front_matter():

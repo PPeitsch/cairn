@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from cairn import config, docs, tree
+from cairn import config, docs, tree, vocab
 from cairn.cli import main
-from cairn.markdown import parse_front_matter
+from cairn.markdown import dump_front_matter, parse_front_matter
 from cairn.migrate import wip_doc
 from cairn.store import Store
 
@@ -66,19 +66,23 @@ def test_import(store, arbol, capsys):
     out = run(capsys, *IMPORT, str(arbol))
     assert "Imported: 4 doc(s), 3 link(s)" in out.out
     assert "viejo_sin_front_matter.md: no front-matter" in out.err
-    assert "api_limites: origen → ../_done/no_existe.md" in out.err
+    assert "api_limites: origin → ../_done/no_existe.md" in out.err
     assert "3 file(s) that are not docs" in out.err
 
     bug = docs.find(store, "2026-01-05_api_BUG_timeout")
     ref = docs.find(store, "api_limites")
     h = docs.find(store, "2026-03-09_api_HANDOFF_seguir")
     assert bug.scope == "done" and ref.scope == "ref" and h.scope == "wip"
-    assert bug.links == [["referencias", ref.id]]
-    assert ref.links == [["origen", bug.id]] and ref.meta["origen"] == ["../_done/no_existe.md"]
+    assert bug.links == [["references", ref.id]]
+    assert ref.links == [["origin", bug.id]] and ref.meta["origin"] == ["../_done/no_existe.md"]
     assert h.links == [["plan", docs.find(store, "2026-03-01_api_cache").id]]
-    assert bug.updated.startswith("2023-11-14")           # the file's mtime
+    assert bug.last_event.startswith("2023-11-14")           # the file's mtime
     ops = {r[0] for r in store.projection.db.execute("SELECT op FROM events")}
     assert ops == {"import"}
+    # wip-doc's Spanish front-matter goes into the events in the canonical vocabulary
+    payloads = [r[0] for r in store.projection.db.execute("SELECT payload FROM events")]
+    assert not any('"tipo"' in x or '"estado"' in x or '"origen"' in x for x in payloads)
+    assert (bug.meta["status"], bug.meta["closed"]) == ("resolved", "2026-03-08")
 
     # twice does not duplicate
     out = run(capsys, *IMPORT, str(arbol))
@@ -92,7 +96,7 @@ def test_import_warns_status_not_matching_folder(store, env, capsys):
     write(r, "_wip/2026-01-02_a_c.md", "---\nestado: en_progreso\nfecha: 2026-01-02\n---\n# c\n")
     err = run(capsys, *IMPORT, str(r)).err
     assert "does not match _done/ — it goes to wip" in err
-    assert "tipo '' → infra" in err
+    assert "type '' → infra" in err
     assert "has no _wip" in run(capsys, *IMPORT, str(env), ok=False).err
 
 
@@ -103,9 +107,11 @@ def test_export_reproduces_the_import(store, arbol, env, capsys):
     assert "4 written" in out
     for rel in ("_done/2026-01-05_api_BUG_timeout.md", "_wip/2026-03-01_api_cache.md",
                 "_wip/2026-03-09_api_HANDOFF_seguir.md"):
-        assert (dest / rel).read_text() == (arbol / rel).read_text(), rel
+        # the same doc, with wip-doc's Spanish front-matter in cairn's vocabulary
+        meta, body = parse_front_matter((arbol / rel).read_text())
+        assert (dest / rel).read_text() == dump_front_matter(vocab.meta(meta)) + body, rel
     meta, _ = parse_front_matter((dest / "_ref/api_limites.md").read_text())
-    assert meta["origen"] == ["../_done/no_existe.md", "../_done/2026-01-05_api_BUG_timeout.md"]
+    assert meta["origin"] == ["../_done/no_existe.md", "../_done/2026-01-05_api_BUG_timeout.md"]
     assert (dest / "_done/2026-01-05_api_BUG_timeout.md").stat().st_mtime == 1_700_000_000
 
     assert "0 written, 4 unchanged" in run(capsys, *EXPORT, str(dest)).out

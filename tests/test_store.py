@@ -9,7 +9,7 @@ from cairn.store import Store, new_doc_id
 def create(store, name="2026-03-10_x_tema", meta=None, body="# x — tema\n"):
     doc_id = new_doc_id()
     with store.writer() as w:
-        w.emit("create", doc_id, {"name": name, "meta": meta or {"tipo": "plan", "estado": "en_progreso"},
+        w.emit("create", doc_id, {"name": name, "meta": meta or {"type": "plan", "status": "in_progress"},
                                   "body": body})
     return doc_id
 
@@ -23,12 +23,12 @@ def snapshot(store):
 def test_create_and_change(store):
     doc = create(store)
     with store.writer() as w:
-        w.emit("edit", doc, {"body": "# x — tema\n\nnuevo\n", "set": {"nota": "algo"}})
-        w.emit("close", doc, {"set": {"estado": "completado", "cerrado": "2026-03-10"},
-                              "unset": ["nota"]})
+        w.emit("edit", doc, {"body": "# x — tema\n\nnuevo\n", "set": {"note": "algo"}})
+        w.emit("close", doc, {"set": {"status": "completed", "closed": "2026-03-10"},
+                              "unset": ["note"]})
     st = store.state(doc)
     assert st.body.endswith("nuevo\n")
-    assert st.meta == {"tipo": "plan", "estado": "completado", "cerrado": "2026-03-10"}
+    assert st.meta == {"type": "plan", "status": "completed", "closed": "2026-03-10"}
     assert st.scope == "done" and st.closed == "2026-03-10" and st.title == "x — tema"
     revs = store.projection.db.execute("SELECT op FROM revisions WHERE doc_id = ? ORDER BY seq",
                                        (doc,)).fetchall()
@@ -59,10 +59,10 @@ def test_failed_block_writes_nothing(store):
 def test_links(store):
     a, b = create(store, "a"), create(store, "b")
     with store.writer() as w:
-        w.emit("link", a, {"link_add": [["referencias", b]]})
-    assert store.state(a).links == [["referencias", b]]
+        w.emit("link", a, {"link_add": [["references", b]]})
+    assert store.state(a).links == [["references", b]]
     with store.writer() as w:
-        w.emit("unlink", a, {"link_remove": [["referencias", b]]})
+        w.emit("unlink", a, {"link_remove": [["references", b]]})
     assert store.state(a).links == []
 
 
@@ -71,8 +71,8 @@ def test_rebuild_matches_incremental(store):
     b = create(store, "b")
     with store.writer() as w:
         w.emit("edit", a, {"body": "uno"})
-        w.emit("link", b, {"link_add": [["origen", a]]})
-        w.emit("close", a, {"set": {"estado": "completado"}})
+        w.emit("link", b, {"link_add": [["origin", a]]})
+        w.emit("close", a, {"set": {"status": "completed"}})
     before = snapshot(store)
     store.rebuild()
     assert snapshot(store) == before
