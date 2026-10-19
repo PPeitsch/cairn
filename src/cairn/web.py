@@ -311,16 +311,36 @@ def view_home(store: Store) -> str:
 
 # ──────────────────────────────────────────────────────────────── lists
 
-def _chips(label: str, key: str, values: list[tuple[str, int | None]], current: dict[str, str],
-           blank: str = "all") -> str:
-    """A row of filters: `blank` is the one that leaves the key out of the query string."""
-    out = []
-    for v, n in [("", None), *values]:
-        cls = " on" if current.get(key, "") == v else ""
-        count = f'<span class="count">{n}</span>' if n is not None else ""
-        href = f"/docs{_qs({**current, key: v})}"
-        out.append(f'<a class="chip{cls}" href="{href}">{esc(v or blank)}{count}</a>')
-    return f'<div class="row"><span class="lbl">{label}</span>{"".join(out)}</div>'
+_SCOPES = (("", "Open"), ("done", "Closed"), ("ref", "References"), ("all", "All"))
+
+
+def _select(key: str, blank: str, values: list[tuple[str, int]], current: str) -> str:
+    opts = [f'<option value="">{esc(blank)}</option>']
+    opts += [f'<option value="{esc(v)}"{" selected" if v == current else ""}>{esc(v)} ({n})</option>'
+             for v, n in values]
+    on = " on" if current else ""
+    return (f'<label class="select{on}"><span class="sr">{esc(blank)}</span>'
+            f'<select name="{key}">{"".join(opts)}</select></label>')
+
+
+def filter_bar(current: dict[str, str], types: list[tuple[str, int]], repos: list[tuple[str, int]],
+               shown: int) -> str:
+    """One line: the scope as a segmented control, type and repo as menus (with how many docs
+    each has), the active ones as removable pills, and how many docs are shown. The menus submit
+    on change; without the script, with the button."""
+    seg = "".join(f'<a href="/docs{_qs({**current, "scope": v})}"{_ON if current["scope"] == v else ""}>'
+                  f"{label}</a>" for v, label in _SCOPES)
+    hidden = f'<input type="hidden" name="scope" value="{esc(current["scope"])}">' if current["scope"] else ""
+    pills = "".join(
+        f'<a class="pill" href="/docs{_qs({**current, key: ""})}" title="remove this filter">'
+        f'{esc(key)}: {esc(current[key])}<span aria-hidden="true">×</span></a>'
+        for key in ("type", "repo") if current[key])
+    return (f'<div class="toolbar"><nav class="seg seg-lg" aria-label="scope">{seg}</nav>'
+            f'<form class="filter-form" action="/docs">{hidden}'
+            f'{_select("type", "All types", types, current["type"])}'
+            f'{_select("repo", "All repos", repos, current["repo"])}'
+            '<noscript><button type="submit" class="btn">Apply</button></noscript></form>'
+            f'{pills}<span class="toolbar-count">{shown} doc(s)</span></div>')
 
 
 def view_list(store: Store, scope: str = "wip", repo: str = "", type_: str = "") -> str:
@@ -333,15 +353,11 @@ def view_list(store: Store, scope: str = "wip", repo: str = "", type_: str = "")
     by_repo = [d for d in every if not type_ or d.type == type_]
     by_type = [d for d in every if not repo or docs.repo_label(d) == repo]
     count = lambda ds, f: sorted({(f(d), sum(1 for x in ds if f(x) == f(d))) for d in ds})  # noqa: E731
-    filters = ('<div class="filters">'
-               + _chips("scope", "scope", [("done", None), ("ref", None), ("all", None)], current, "open")
-               + _chips("type", "type", count(by_type, lambda d: d.type), current)
-               + _chips("repo", "repo", count(by_repo, docs.repo_label), current) + "</div>")
     shown = [d for d in by_repo if not repo or docs.repo_label(d) == repo]
+    bar = filter_bar(current, count(by_type, lambda d: d.type), count(by_repo, docs.repo_label), len(shown))
     title = {"wip": "Open", "done": "Closed", "ref": "References", "all": "All docs"}[scope]
     items = "".join(item(d) for d in shown)
-    body = (f'<h1 class="page-title">{title}</h1><p class="page-sub">{len(shown)} doc(s), most recently '
-            f"touched first</p>{filters}"
+    body = (f'<h1 class="page-title">{title}</h1>{bar}'
             + (f'<div class="card"><ul class="items">{items}</ul></div>' if shown
                else '<div class="empty">Nothing here.</div>'))
     return page(title, body, store, {"wip": "open"}.get(scope, scope))
@@ -625,8 +641,8 @@ def view_activity(store: Store, n: int = 150) -> str:
 
 def view_weekly(store: Store, days: int = 7) -> str:
     since, closed = docs.weekly(store, days)
-    chips = "".join(f'<a class="chip{" on" if d == days else ""}" href="/weekly?days={d}">{d} days</a>'
-                    for d in (7, 14, 30, 90))
+    seg = "".join(f'<a href="/weekly?days={d}"{_ON if d == days else ""}>{d} days</a>'
+                  for d in (7, 14, 30, 90))
     groups: dict[str, list[Doc]] = {}
     for d in sorted(closed, key=docs.repo_label):
         groups.setdefault(docs.repo_label(d), []).append(d)
@@ -637,7 +653,7 @@ def view_weekly(store: Store, days: int = 7) -> str:
         for repo, ds in groups.items())
     body = (f'<h1 class="page-title">Closed since {esc(since)}</h1>'
             f'<p class="page-sub">{len(closed)} piece(s) of work in the last {days} days</p>'
-            f'<div class="filters"><div class="row">{chips}</div></div>'
+            f'<div class="toolbar"><nav class="seg seg-lg" aria-label="window">{seg}</nav></div>'
             + (cards or '<div class="empty">Nothing closed in this window.</div>'))
     return page("Weekly", body, store, "weekly")
 

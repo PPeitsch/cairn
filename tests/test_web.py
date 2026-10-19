@@ -38,9 +38,14 @@ def test_list_filters_with_counts(store):
     a = _plan(store, "cache", "api")
     b = _plan(store, "colas", "web")
     _, body = web.route(store, "/docs")
-    assert '<a class="chip" href="/docs?repo=web">web<span class="count">1</span></a>' in body
+    assert '<option value="web">web (1)</option>' in body and '<a href="/docs" class="on">Open</a>' in body
+    assert 'class="pill"' not in body and "2 doc(s)" in body
     _, only_web = web.route(store, "/docs?repo=web")
     assert b.name in _main(only_web) and f'href="/doc/{a.name}"' not in only_web
+    assert '<option value="web" selected>web (1)</option>' in only_web
+    assert '<a class="pill" href="/docs" title="remove this filter">repo: web' in only_web
+    _, closed_web = web.route(store, "/docs?scope=done&repo=web")
+    assert '<input type="hidden" name="scope" value="done">' in closed_web      # the menus keep it
     _, refs = web.route(store, "/docs?scope=ref")
     assert "Nothing here." in refs
     assert web.route(store, "/docs?scope=nope")[0] == 404
