@@ -178,7 +178,7 @@ def cairn_search(pattern: str, scope: Scope = "all", fts: bool = False) -> str:
                 "Para acotar: un patrón más preciso, fts=true (por relevancia) o "
                 "cairn_show con lineas= alrededor de una coincidencia."]
     if files:
-        out += ["", f"archivos de scripts/ y validations/ ({len(files)}):"]
+        out += ["", f"archivos de {tree.label(store)} ({len(files)}):"]
         for f in files:
             out.append(f"  {f.path}")
             out += [f"    {n}: {line.strip()[:160]}" for n, line in f.lines[:5]]

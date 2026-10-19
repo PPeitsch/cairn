@@ -30,7 +30,7 @@ from cairn.events import CREATE_OPS, Event
 
 SCHEMA_VERSION = 1
 
-# statuses that leave the doc closed (in the wip-doc tree: `_done/`)
+# statuses that leave the doc closed (the `done` scope)
 CLOSED_STATES = frozenset({"resuelto", "completado", "descartado", "archivado", "usada", "descartada"})
 OPEN_STATES = frozenset({"en_progreso", "en_monitoreo", "propuesto", "pendiente"})
 
@@ -88,7 +88,7 @@ class DocState:
 
     @property
     def scope(self) -> str:
-        """Where it would be in the wip-doc tree: `ref`, `done` or `wip`."""
+        """`ref`, `done` or `wip`: what `list` and `search` filter by."""
         if self.tipo == "ref":
             return "ref"
         return "done" if self.estado in CLOSED_STATES else "wip"

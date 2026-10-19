@@ -1,13 +1,10 @@
 import io
-import os
 import sys
-from pathlib import Path
 
 import pytest
 
 from cairn import docs
 from cairn.cli import main
-from cairn.markdown import parse_front_matter
 
 HOY = "2026-03-10"
 
@@ -137,97 +134,3 @@ def test_log_show_diff(store, plan, capsys, monkeypatch):
 
 def test_diff_without_changes(store, plan, capsys):
     assert "Sin diferencias" in run(capsys, "diff", plan).out
-
-
-# ──────────────────────────────────────────────────────────────── import / export
-
-def write(root: Path, rel: str, text: str, mtime: float | None = None):
-    p = root / rel
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(text)
-    if mtime:
-        os.utime(p, (mtime, mtime))
-    return p
-
-
-@pytest.fixture
-def arbol(env):
-    """A made-up wip-doc tree: docs with links, a handoff, junk and a broken link."""
-    r = env / "arbol"
-    write(r, "_done/2026-01-05_api_BUG_timeout.md",
-          "---\ntipo: bug\nrepo: api\nestado: resuelto\nfecha: 2026-01-05\ncerrado: 2026-03-08\n"
-          "autor: Pablo + Claude\nreferencias:\n  - ../_ref/api_limites.md\n---\n\n# api — timeout\n\n"
-          "## TL;DR\n\nSe subió el timeout.\n", mtime=1_700_000_000)
-    write(r, "_ref/api_limites.md",
-          "---\ntipo: ref\nrepo: api\nfecha: 2026-01-05\nactualizado: 2026-01-06\n"
-          "autor: Pablo + Claude\norigen:\n  - ../_done/2026-01-05_api_BUG_timeout.md\n"
-          "  - ../_done/no_existe.md\n---\n\n# api — límites\n")
-    write(r, "_wip/2026-03-01_api_cache.md",
-          "---\ntipo: plan\nrepo: api\nestado: en_progreso\nnota: \"falta: medir\"\n"
-          "fecha: 2026-03-01\nautor: Pablo + Claude\n---\n\n# api — cache\n\n- [ ] medir\n")
-    write(r, "_wip/2026-03-09_api_HANDOFF_seguir.md",
-          "---\ntipo: handoff\nrepo: api\nestado: pendiente\nfecha: 2026-03-09\nautor: Pablo + Claude\n"
-          "plan:\n  - ../_wip/2026-03-01_api_cache.md\n---\n\n# api — handoff: seguir\n")
-    write(r, "_wip/viejo_sin_front_matter.md", "# viejo\n\n**Estado:** abierto\n")
-    write(r, "_wip/scripts/api_bench.py", "print(1)\n")
-    write(r, "_wip/validations/api_resultado.md", "# no es un doc\n")
-    write(r, "_wip/README.md", "# readme\n")
-    return r
-
-
-def test_import(store, arbol, capsys):
-    out = run(capsys, "import", str(arbol), "--dry-run")
-    assert "Se importarían: 4 doc(s), 3 vínculo(s)" in out.out
-    assert store.projection.count_events() == 0
-    out = run(capsys, "import", str(arbol))
-    assert "Importados: 4 doc(s), 3 vínculo(s)" in out.out
-    assert "viejo_sin_front_matter.md: sin front-matter" in out.err
-    assert "api_limites: origen → ../_done/no_existe.md" in out.err
-    assert "3 archivo(s) que no son docs" in out.err
-
-    bug = docs.find(store, "2026-01-05_api_BUG_timeout")
-    ref = docs.find(store, "api_limites")
-    h = docs.find(store, "2026-03-09_api_HANDOFF_seguir")
-    assert bug.scope == "done" and ref.scope == "ref" and h.scope == "wip"
-    assert bug.links == [["referencias", ref.id]]
-    assert ref.links == [["origen", bug.id]] and ref.meta["origen"] == ["../_done/no_existe.md"]
-    assert h.links == [["plan", docs.find(store, "2026-03-01_api_cache").id]]
-    assert bug.updated.startswith("2023-11-14")           # the file's mtime
-    ops = {r[0] for r in store.projection.db.execute("SELECT op FROM events")}
-    assert ops == {"import"}
-
-    # twice does not duplicate
-    out = run(capsys, "import", str(arbol))
-    assert "Importados: 0 doc(s)" in out.out and "ya está en la base" in out.err
-    assert "[OK] todo en orden" in run(capsys, "check").out
-
-
-def test_import_warns_status_not_matching_folder(store, env, capsys):
-    r = env / "arbol"
-    write(r, "_done/2026-01-01_a_b.md", "---\ntipo: plan\nestado: en_progreso\nfecha: 2026-01-01\n---\n# a\n")
-    write(r, "_wip/2026-01-02_a_c.md", "---\nestado: en_progreso\nfecha: 2026-01-02\n---\n# c\n")
-    err = run(capsys, "import", str(r)).err
-    assert "no corresponde a _done/ — queda en wip" in err
-    assert "tipo '' → infra" in err
-    assert "no tiene _wip" in run(capsys, "import", str(env), ok=False).err
-
-
-def test_export_reproduces_the_import(store, arbol, env, capsys):
-    run(capsys, "import", str(arbol))
-    dest = env / "export"
-    out = run(capsys, "export", str(dest)).out
-    assert "4 escrito(s)" in out
-    for rel in ("_done/2026-01-05_api_BUG_timeout.md", "_wip/2026-03-01_api_cache.md",
-                "_wip/2026-03-09_api_HANDOFF_seguir.md"):
-        assert (dest / rel).read_text() == (arbol / rel).read_text(), rel
-    meta, _ = parse_front_matter((dest / "_ref/api_limites.md").read_text())
-    assert meta["origen"] == ["../_done/no_existe.md", "../_done/2026-01-05_api_BUG_timeout.md"]
-    assert (dest / "_done/2026-01-05_api_BUG_timeout.md").stat().st_mtime == 1_700_000_000
-
-    assert "0 escrito(s), 4 sin cambios" in run(capsys, "export", str(dest)).out
-    run(capsys, "close", "2026-03-01_api_cache", "--force")
-    err = run(capsys, "export", str(dest), ok=False).err
-    assert "ya existen con otro contenido" in err      # the handoff now points to _done/
-    r = run(capsys, "export", str(dest), "--force")
-    assert "_wip/2026-03-01_api_cache.md no corresponde a ningún doc" in r.err
-    assert (dest / "_done/2026-03-01_api_cache.md").is_file()

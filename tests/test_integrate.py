@@ -8,6 +8,7 @@ import textwrap
 import pytest
 
 from cairn import cli, integrate
+from cairn.migrate import wip_doc
 
 WIP_DOC_HOOK = {"matcher": "startup|clear", "hooks": [
     {"type": "command", "command": "/x/skills/wip-doc/driver.py handoff hook", "timeout": 10}]}
@@ -164,35 +165,22 @@ def test_cli(cc, capsys):
     assert "ya estaba" in capsys.readouterr().out
 
 
-def test_replace_wip_doc_removes_its_hook(cc):
+def test_wip_doc_unhook(cc, capsys):
     integrate.claude_code(CMD)                         # coexistence: both hooks
-    rep = integrate.claude_code(CMD, replace_wip_doc=True)
-    assert rep.actions == ["sacar hook SessionStart de wip-doc: /x/skills/wip-doc/driver.py handoff hook"]
-    hooks = [h["command"] for g in settings(cc)["hooks"]["SessionStart"] for h in g["hooks"]]
-    assert hooks == ["/opt/cairn/bin/cairn handoff hook"]
-    assert integrate.claude_code(CMD, replace_wip_doc=True).actions == []
-
-
-def test_replace_wip_doc_in_one_step_and_dry_run(cc):
     before = (cc / "settings.json").read_text()
-    rep = integrate.claude_code(CMD, replace_wip_doc=True, dry_run=True)
-    assert len(rep.actions) == 4 and (cc / "settings.json").read_text() == before
-    integrate.claude_code(CMD, replace_wip_doc=True)
-    start = settings(cc)["hooks"]["SessionStart"]
-    assert [h["command"] for g in start for h in g["hooks"]] == ["/opt/cairn/bin/cairn handoff hook"]
+    assert len(wip_doc.unhook(dry_run=True).actions) == 1
+    assert (cc / "settings.json").read_text() == before
+    assert cli.main(["migrate", "wip-doc", "unhook"]) == 0
+    assert capsys.readouterr().out == (
+        "sacar hook SessionStart de wip-doc: /x/skills/wip-doc/driver.py handoff hook\n")
+    hooks = [h["command"] for g in settings(cc)["hooks"]["SessionStart"] for h in g["hooks"]]
+    assert hooks == ["/opt/cairn/bin/cairn handoff hook"] and settings(cc)["model"] == "x"
+    assert wip_doc.unhook().actions == []
 
 
-def test_replace_wip_doc_not_with_remove(cc):
-    with pytest.raises(integrate.CairnError, match="replace-wip-doc"):
-        integrate.claude_code(CMD, remove=True, replace_wip_doc=True)
-
-
-def test_recognizes_the_wip_doc_hook():
-    assert integrate._is_wip_doc_hook("/home/p/.claude/skills/wip-doc/driver.py handoff hook")
-    assert integrate._is_wip_doc_hook("python3 /x/wip-doc/driver.py handoff hook")
-    assert not integrate._is_wip_doc_hook("/x/wip-doc/driver.py handoff list")
-    assert not integrate._is_wip_doc_hook("/x/otro/driver.py handoff hook")
-    assert not integrate._is_wip_doc_hook("/opt/cairn/bin/cairn handoff hook")
+def test_wip_doc_unhook_leaves_no_empty_hooks(cc):
+    wip_doc.unhook()
+    assert settings(cc) == {"model": "x"}
 
 
 # ──────────────────────────────────────────────────────────────── systemd timer

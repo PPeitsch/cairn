@@ -5,8 +5,7 @@
   config (`~/.claude.json`) is internal state that Claude Code rewrites often, so here it is
   only read, to find out whether the server is already there.
 - The hooks go into `settings.json` (there is no CLI for that): only cairn's entries are added,
-  replaced or removed, without touching the rest (e.g. wip-doc's hook while both coexist).
-  With `replace_wip_doc` it also removes wip-doc's: that is the migration step.
+  replaced or removed, without touching the rest.
 
 It is idempotent (running it twice duplicates nothing) and `remove` undoes it. It honors
 `CLAUDE_CONFIG_DIR`, which allows testing it against an isolated config.
@@ -145,16 +144,6 @@ def _write_settings(path: Path, data: dict) -> None:
         raise
 
 
-def _is_wip_doc_hook(command: str) -> bool:
-    """wip-doc's handoffs hook (`.../wip-doc/driver.py handoff hook`), which cairn's replaces."""
-    try:
-        parts = shlex.split(command)
-    except ValueError:
-        return False
-    return parts[-2:] == ["handoff", "hook"] and any(
-        Path(p).name == "driver.py" and Path(p).parent.name == "wip-doc" for p in parts[:-2])
-
-
 def _strip_hooks(groups: list, match) -> tuple[list, list[str]]:
     """Removes the hooks whose command satisfies `match`. (remaining groups, removed commands)."""
     out, removed = [], []
@@ -216,29 +205,6 @@ def _apply_hooks(data: dict, command: list[str], install: bool, report: Report,
     return changed
 
 
-def _remove_wip_doc_hook(data: dict, report: Report) -> bool:
-    """Removes wip-doc's handoffs hook: with both active, every handoff would be announced twice.
-    True if anything changed."""
-    hooks = data.get("hooks")
-    if not isinstance(hooks, dict) or not isinstance(hooks.get("SessionStart"), list):
-        return False
-    groups, removed = _strip_hooks(hooks["SessionStart"], _is_wip_doc_hook)
-    for r in removed:
-        report.actions.append(f"sacar hook SessionStart de wip-doc: {r}")
-    if not removed:
-        return False
-    hooks = dict(hooks)
-    if groups:
-        hooks["SessionStart"] = groups
-    else:
-        hooks.pop("SessionStart")
-    if hooks:
-        data["hooks"] = hooks
-    else:
-        data.pop("hooks")
-    return True
-
-
 # ──────────────────────────────────────────────────────────────── MCP
 
 def registered_mcp(name: str = MCP_NAME) -> dict | None:
@@ -288,12 +254,7 @@ def _apply_mcp(command: list[str], install: bool, dry_run: bool, report: Report,
 # ──────────────────────────────────────────────────────────────── entry point
 
 def claude_code(command: list[str] | None = None, remove: bool = False, dry_run: bool = False,
-                mcp: bool = True, hooks: bool = True, replace_wip_doc: bool = False,
-                settings: Settings | None = None) -> Report:
-    """`replace_wip_doc`: also removes wip-doc's handoffs hook (the migration step where cairn
-    takes over the announcing). It cannot be combined with `remove`."""
-    if replace_wip_doc and (remove or not hooks):
-        raise CairnError("--replace-wip-doc instala el hook de cairn: no va con --remove ni --no-hooks")
+                mcp: bool = True, hooks: bool = True, settings: Settings | None = None) -> Report:
     command = command or default_command()
     settings = settings or Settings.from_config()
     report = Report()
@@ -301,8 +262,6 @@ def claude_code(command: list[str] | None = None, remove: bool = False, dry_run:
         path = settings_path()
         data = _load_settings(path)
         changed = _apply_hooks(data, command, not remove, report, settings.hooks())
-        if replace_wip_doc:
-            changed = _remove_wip_doc_hook(data, report) or changed
         if changed and not dry_run:
             _write_settings(path, data)
     if mcp:

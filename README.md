@@ -4,9 +4,9 @@ A local-first store for working docs (diagnoses, plans, references) and handoffs
 conversations. Every place where work happens is a **node** with its own database; nodes sync
 over ssh, git style, and agents access it through MCP stdio.
 
-> Status: under construction. Phases 1 (local core: log, projection, CLI and importer), 2 (MCP
-> stdio and Claude Code integration) and 3 (ssh sync with signed events) are done. Still to do:
-> migrating from wip-doc and, if needed, an HTTPS transport for cloud nodes without outbound ssh.
+> Status: in daily use. Done: the local core (log, projection, CLI), MCP stdio and the Claude
+> Code integration, ssh sync with signed events, and the migration from wip-doc. Still to do, if
+> needed: an HTTPS transport for cloud nodes without outbound ssh.
 
 > The CLI output, the MCP tool descriptions and the doc templates are still in Spanish, and so
 > are the front-matter field names (`tipo`, `estado`, `nota`, …). Moving them to English is
@@ -46,8 +46,8 @@ changes the event format, so two nodes can have different configs.
 | | `author` | `git config user.name`, or the user | author of new docs |
 | | `templates` | (the built-in ones) | folder with `bug.md`, `infra.md`, `plan.md`, `ref.md`, `ref_header.md`, `handoff.md`; `{titulo}` is replaced |
 | | `handoff_stale_days` | `14` | after how many days a pending handoff is flagged as old |
-| | `file_dirs` | `scripts, validations` | file subfolders that are not docs |
-| | `prune`, `max_depth` | `node_modules, .git, …`, `4` | what not to walk when looking for doc folders inside repos |
+| | `file_dirs` | (none) | subfolders of `<projects>/_wip`, `_done` and `_ref` with files that are not docs (e.g. `scripts, validations`); see below |
+| | `prune`, `max_depth` | `node_modules, .git, …`, `4` | what not to walk in those folders, and when looking for wip-doc folders inside repos |
 | `[sync]` | `auto` | `true` | background sync and sync in the hooks |
 | | `timeout`, `hook_timeout` | `60`, `15` | seconds per remote (by hand / in the handoffs hook) |
 | | `debounce` | `5` | seconds the sync triggered by a write waits, so a burst travels together |
@@ -73,7 +73,6 @@ cairn --version
 
 ```bash
 cairn init                                  # config, data and empty database (node = hostname)
-cairn import ~/projects                     # once: the docs in _wip/_done/_ref (--dry-run)
 
 cairn new bcra rate_limit_429 bug           # a diagnosis; also infra (default), plan, ref
 cairn edit <doc>                            # in $EDITOR; or --stdin / --file / --set k=v / --unset k
@@ -93,7 +92,6 @@ cairn handoff take [<note>] | drop <note> [reason] | list [--all] | hook
 cairn show <doc>[@rev] [--seccion S | --lineas A-B]   # rev: hash prefix or ~N
 cairn log [<doc>] [-n N]
 cairn diff <doc> [rev_a] [rev_b]            # default: the last change
-cairn export <dest> [scope] [--force]       # the docs as a _wip/_done/_ref tree
 cairn rebuild                               # rebuilds the SQLite database from the log
 cairn resolve <doc> [--keep main|<hash>]    # divergent branches: see them and pick one
 ```
@@ -184,7 +182,6 @@ old key to check and `--old-key` is not needed.
 cairn integrate claude-code [--dry-run]     # registers the MCP server (user scope) and the SessionStart hook
 cairn integrate claude-code --remove        # undoes it
 cairn integrate claude-code --command "ssh vps cairn"   # use another node's database over ssh
-cairn integrate claude-code --replace-wip-doc           # when migrating: also removes wip-doc's hook
 ```
 
 `integrate` registers the MCP server with `claude mcp add --scope user` and adds only cairn's
@@ -197,15 +194,35 @@ entries to `settings.json` (it does not touch the other hooks). It is idempotent
 `cairn_diff`) and the handoffs (`cairn_handoff_new|list|take|drop`). Its instructions carry the
 conventions for when and how to document.
 
-`check` and `search` also look at the projects root: `check` warns about a stray `.md` in
-`_wip/`, `_done/` or `_ref/` (a doc that did not go through cairn, or a wip-doc leftover already
-imported), about files outside `scripts/` and `validations/`, and about `_wip/` folders inside a
-repo; `search` also searches the `.md` files in `scripts/` and `validations/`, which are still
-plain files.
-
 A doc is referred to by its name (`2026-10-04_cairn_arquitectura`, with or without `.md`) or by a
 prefix of its id. There are no folders: whether a doc is open, closed or a reference is given by
 its type and status, and links (`origen`, `referencias`, `plan`) are stored by id.
+It is shown as `_wip/<name>.md`, `_done/<name>.md` or `_ref/<name>.md` (open, closed,
+reference), and links between docs are rendered as relative paths from there.
+
+### Files that are not docs
+
+Scripts, generated reports and CSV files do not go into cairn. If they live under the projects
+root, in `_wip/`, `_done/` and `_ref/`, `[docs] file_dirs` names their subfolders (e.g.
+`file_dirs = "scripts, validations"`), and then `search` also searches the `.md` files in them
+and `check` warns about what is out of place: a stray `.md` at the top (a doc that did not go
+through cairn), a file outside the subfolders, or a subfolder that is not one of them. Without
+`file_dirs` (the default), cairn does not look at those folders.
+
+### Migrating from wip-doc
+
+wip-doc kept the docs as `.md` files in `<root>/{_wip,_done,_ref}` and announced handoffs from
+its own `SessionStart` hook. Each step of the move is its own command:
+
+```bash
+cairn migrate wip-doc import ~/projects [--dry-run]   # once: the docs in _wip/_done/_ref
+cairn migrate wip-doc check [<root>]                  # what is left: files already imported, docs
+                                                      # not imported, _wip/ folders inside repos
+cairn migrate wip-doc unhook [--dry-run]              # removes wip-doc's hook from Claude Code
+cairn migrate wip-doc export <dest> [scope] [--force] # cairn's docs back as that tree
+```
+
+Importing twice duplicates nothing, and `export` of what was imported reproduces the files.
 
 ## Development
 

@@ -21,7 +21,6 @@ from cairn import (
     keys,
     reading,
     sync,
-    transfer,
     tree,
 )
 from cairn.context import repo_of_path
@@ -193,7 +192,7 @@ def cmd_search(args) -> int:
             print(f"      │ {n}: {line.strip()[:140]}")
         print()
     if files:
-        print(f"━━━━━  archivos de scripts/ y validations/  ({len(files)})  ━━━━━\n")
+        print(f"━━━━━  archivos de {tree.label(store)}  ({len(files)})  ━━━━━\n")
         for f in files:
             print(f"  {f.path}   ·   {len(f.lines)} coincidencia(s)")
             for n, line in f.lines[:3]:
@@ -382,11 +381,12 @@ def cmd_resolve(args) -> int:
     return 0
 
 
-# ──────────────────────────────────────────────────────────────── import / export
+# ──────────────────────────────────────────────────────────────── migrate wip-doc
 
-def cmd_import(args) -> int:
+def cmd_wip_doc_import(args) -> int:
+    from cairn.migrate import wip_doc
     with _open() as store:
-        rep = transfer.import_tree(store, Path(args.raiz), dry_run=args.dry_run)
+        rep = wip_doc.import_tree(store, Path(args.raiz), dry_run=args.dry_run)
     verb = "Se importarían" if args.dry_run else "Importados"
     print(f"{verb}: {len(rep.imported)} doc(s), {rep.links} vínculo(s)")
     if args.verbose:
@@ -403,12 +403,34 @@ def cmd_import(args) -> int:
     return 0
 
 
-def cmd_export(args) -> int:
+def cmd_wip_doc_export(args) -> int:
+    from cairn.migrate import wip_doc
     with _open() as store:
-        rep = transfer.export_tree(store, Path(args.destino), _scopes(args.scope), force=args.force)
+        rep = wip_doc.export_tree(store, Path(args.destino), _scopes(args.scope), force=args.force)
     print(f"Exportados: {len(rep.written)} escrito(s), {rep.unchanged} sin cambios, en {args.destino}")
     for x in rep.stale:
         warn(f"[aviso] {x} no corresponde a ningún doc exportado (¿cambió de carpeta?): no se borró")
+    return 0
+
+
+def cmd_wip_doc_check(args) -> int:
+    from cairn.migrate import wip_doc
+    with _open() as store:
+        problems = wip_doc.leftovers(store, Path(args.raiz) if args.raiz else None)
+    for p in problems:
+        print(f"  [aviso] {p}")
+    print(f"\n  {len(problems)} resto(s) de wip-doc" if problems else "  [OK] no quedan restos de wip-doc")
+    return 1 if problems else 0
+
+
+def cmd_wip_doc_unhook(args) -> int:
+    from cairn.migrate import wip_doc
+    rep = wip_doc.unhook(dry_run=args.dry_run)
+    prefix = "[dry-run] " if args.dry_run else ""
+    for a in rep.actions:
+        print(f"{prefix}{a}")
+    if not rep.actions:
+        print("No está el hook de wip-doc.")
     return 0
 
 
@@ -449,8 +471,7 @@ def cmd_integrate(args) -> int:
                                 dry_run=args.dry_run)
     else:
         rep = integrate.claude_code(command, remove=args.remove, dry_run=args.dry_run,
-                                    mcp=not args.no_mcp, hooks=not args.no_hooks,
-                                    replace_wip_doc=args.replace_wip_doc)
+                                    mcp=not args.no_mcp, hooks=not args.no_hooks)
     prefix = "[dry-run] " if args.dry_run else ""
     for a in rep.actions:
         print(f"{prefix}{a}")
@@ -673,18 +694,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--keep", metavar="main|HASH", help="`main` (la principal) o el hash de una rama")
     p.set_defaults(func=cmd_resolve)
 
-    p = sub.add_parser("import", help="importa los docs de <raíz>/{_wip,_done,_ref} (una vez)")
-    p.add_argument("raiz", help="la carpeta que tiene _wip/, _done/ y _ref/ (p. ej. ~/projects)")
-    p.add_argument("--dry-run", action="store_true", help="mostrar qué se importaría sin escribir")
-    p.add_argument("-v", "--verbose", action="store_true", help="listar cada doc")
-    p.set_defaults(func=cmd_import)
-
-    p = sub.add_parser("export", help="escribe los docs como archivos en <destino>/{_wip,_done,_ref}")
-    p.add_argument("destino")
-    p.add_argument("scope", nargs="?", default="all", choices=["wip", "done", "ref", "all"])
-    p.add_argument("-f", "--force", action="store_true", help="pisar archivos con otro contenido")
-    p.set_defaults(func=cmd_export)
-
     p = sub.add_parser("rebuild", help="rehace la proyección SQLite desde el log de eventos")
     p.set_defaults(func=cmd_rebuild)
 
@@ -706,8 +715,6 @@ def build_parser() -> argparse.ArgumentParser:
                    "p. ej. \"ssh vps cairn\" para usar la base de otro nodo)")
     p.add_argument("--no-mcp", action="store_true", help="no tocar el MCP")
     p.add_argument("--no-hooks", action="store_true", help="no tocar los hooks")
-    p.add_argument("--replace-wip-doc", action="store_true",
-                   help="sacar también el hook de handoffs de wip-doc (al migrar)")
     p.set_defaults(func=cmd_integrate)
 
     p = sub.add_parser("key", help="la clave pública de este nodo (para `authorize` en el otro)")
@@ -770,6 +777,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stdio", action="store_true")
     p.add_argument("--as", dest="as_node", help="identidad fijada por authorized_keys")
     p.set_defaults(func=cmd_sync_peer)
+
+    m = sub.add_parser("migrate", help="migrar desde otra herramienta")
+    ms = m.add_subparsers(dest="tool", required=True)
+    w = ms.add_parser("wip-doc", help="desde wip-doc: el árbol <raíz>/{_wip,_done,_ref} y su hook")
+    ws = w.add_subparsers(dest="wip_doc_cmd", required=True)
+    p = ws.add_parser("import", help="importa los docs de <raíz>/{_wip,_done,_ref} (una vez)")
+    p.add_argument("raiz", help="la carpeta que tiene _wip/, _done/ y _ref/ (p. ej. ~/projects)")
+    p.add_argument("--dry-run", action="store_true", help="mostrar qué se importaría sin escribir")
+    p.add_argument("-v", "--verbose", action="store_true", help="listar cada doc")
+    p.set_defaults(func=cmd_wip_doc_import)
+    p = ws.add_parser("export", help="escribe los docs como archivos en <destino>/{_wip,_done,_ref}")
+    p.add_argument("destino")
+    p.add_argument("scope", nargs="?", default="all", choices=["wip", "done", "ref", "all"])
+    p.add_argument("-f", "--force", action="store_true", help="pisar archivos con otro contenido")
+    p.set_defaults(func=cmd_wip_doc_export)
+    p = ws.add_parser("check", help="qué quedó de wip-doc: docs sin importar, archivos ya importados, "
+                      "_wip/ adentro de repos (sale 1 si hay)")
+    p.add_argument("raiz", nargs="?", help="default: la raíz de proyectos")
+    p.set_defaults(func=cmd_wip_doc_check)
+    p = ws.add_parser("unhook", help="saca el hook de handoffs de wip-doc de Claude Code")
+    p.add_argument("--dry-run", action="store_true", help="muestra qué haría, sin tocar nada")
+    p.set_defaults(func=cmd_wip_doc_unhook)
 
     h = sub.add_parser("handoff", help="notas para la próxima conversación")
     hs = h.add_subparsers(dest="handoff_cmd", metavar="<new|take|drop|list|hook>", required=True)
