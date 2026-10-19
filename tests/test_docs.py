@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from cairn import docs
+from cairn import docs, edit
 from cairn.cli import main
 from cairn.markdown import parse_front_matter
 from cairn.store import CairnError
@@ -62,9 +62,15 @@ def test_new_ref_without_date_and_plan(store, repo, capsys):
 def test_new_cross_repo_and_explicit_repo(store, env, monkeypatch, capsys):
     monkeypatch.chdir(env / "projects")
     run(capsys, "new", "infra", "vpn")
-    assert "repo" not in docs.find(store, f"{HOY}_infra_vpn").meta
+    assert docs.find(store, f"{HOY}_infra_vpn").meta["repo"] == "cross-repo"
     run(capsys, "new", "infra", "dns", "--repo", "cross-repo")
     assert docs.find(store, f"{HOY}_infra_dns").meta["repo"] == "cross-repo"
+    # an older doc created outside any repo has no `repo:` at all: it groups with the rest
+    old = docs.new(store, "infra", "viejo").doc
+    edit.apply(store, old.id, unset=["repo"])
+    assert "repo" not in docs.get(store, old.id).meta
+    out = docs.grouped_by_repo(docs.all_docs(store, ("wip",)))
+    assert out[0].startswith("3 doc(s) in 1 repo(s)") and "cross-repo (3)" in out
 
 
 def test_new_does_not_overwrite_and_validates(store, repo, capsys):

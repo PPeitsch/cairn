@@ -85,7 +85,7 @@ Status lives in the front-matter (`type`, `repo`, `status`, `date`, `closed`, â€
 operations change it: a doc with unchecked `- [ ]` items does not close without `--force`, a
 discarded one keeps its reason (`close --discard "why"`), and editing a reference stamps
 `updated:` so a stale one shows its age. Work that spans several repos goes under
-`repo: cross-repo`.
+`repo: cross-repo`, which is also what a doc created outside any repo gets.
 
 None of the text is hard-wired. `cairn defaults <folder>` exports the built-in templates (one per
 type) and the MCP instructions (when and how the agent should document); edit them â€” rewrite the
