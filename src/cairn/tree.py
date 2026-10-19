@@ -26,9 +26,9 @@ class FileHit:
 
 
 def label(store: Store) -> str:
-    """`scripts/ y validations/`: how the file subfolders are named in messages."""
+    """`scripts/ and validations/`: how the file subfolders are named in messages."""
     names = [f"{d}/" for d in store.config.file_dirs]
-    return " y ".join([", ".join(names[:-1]), names[-1]] if len(names) > 1 else names)
+    return " and ".join([", ".join(names[:-1]), names[-1]] if len(names) > 1 else names)
 
 
 def problems(store: Store) -> list[str]:
@@ -38,7 +38,7 @@ def problems(store: Store) -> list[str]:
     root = cfg.projects
     if not cfg.file_dirs or not root.is_dir():
         return []
-    subs = " o ".join(f"{d}/" for d in cfg.file_dirs)
+    subs = " or ".join(f"{d}/" for d in cfg.file_dirs)
     out: list[str] = []
     for c in DOC_DIRS:
         d = root / c
@@ -47,12 +47,12 @@ def problems(store: Store) -> list[str]:
         for p in sorted(d.iterdir()):
             if p.is_file() and p.suffix == ".md":
                 if p.name.lower() != "readme.md":
-                    out.append(f"{c}/{p.name}: un .md suelto — los docs van en cairn; los archivos, "
-                               f"en {c}/ + {subs}")
+                    out.append(f"{c}/{p.name}: a stray .md — docs go in cairn; files, in "
+                               f"{c}/ + {subs}")
             elif p.is_file():
-                out.append(f"{c}/{p.name} no es un doc — va en {c}/ + {subs}")
+                out.append(f"{c}/{p.name} is not a doc — it goes in {c}/ + {subs}")
             elif p.is_dir() and p.name not in cfg.file_dirs and not p.name.startswith("."):
-                out.append(f"{c}/{p.name}/ no es una carpeta de archivos ({subs})")
+                out.append(f"{c}/{p.name}/ is not a files folder ({subs})")
     return out
 
 

@@ -4,7 +4,7 @@ Everything works on the doc as a file (front-matter included), so the line numbe
 ones search returns:
 
 - `lines="40-80"` (or `"40"`, `"40-"`): that range, numbered;
-- `section="Decisiones"`: the section whose title starts with (or contains) that, up to the next
+- `section="Decisions"`: the section whose title starts with (or contains) that, up to the next
   one of its level or higher, numbered;
 - a doc longer than `max_chars`, with none of the above and without `full`: its outline
   (front-matter, title, TL;DR and the sections with their lines and size) instead of the doc.
@@ -62,13 +62,13 @@ def line_range(text: str, spec: str) -> str:
     lines = text.splitlines()
     m = re.fullmatch(r"\s*(\d+)\s*(?:(-)\s*(\d+)?)?\s*", spec)
     if not m:
-        raise CairnError(f"lineas: se espera `A-B`, `A-` o `A` (p. ej. `40-80`), no {spec!r}")
+        raise CairnError(f"lineas: expected `A-B`, `A-` or `A` (e.g. `40-80`), not {spec!r}")
     a = int(m.group(1))
     b = int(m.group(3)) if m.group(3) else (len(lines) if m.group(2) else a)
     if a < 1 or b < a or a > len(lines):
-        raise CairnError(f"lineas {spec}: el doc tiene {len(lines)} línea(s)")
+        raise CairnError(f"lineas {spec}: the doc has {len(lines)} line(s)")
     b = min(b, len(lines))
-    return f"(líneas {a}-{b} de {len(lines)})\n" + _numbered(lines[a - 1:b], a)
+    return f"(lines {a}-{b} of {len(lines)})\n" + _numbered(lines[a - 1:b], a)
 
 
 def find_section(text: str, name: str) -> str:
@@ -77,10 +77,10 @@ def find_section(text: str, name: str) -> str:
     chosen = (next((s for s in every if s.title.lower().startswith(wanted)), None)
               or next((s for s in every if wanted in s.title.lower()), None))
     if chosen is None:
-        available = ", ".join(f"«{s.title}»" for s in every if s.level <= 3) or "(ninguna)"
-        raise CairnError(f"No hay una sección «{name}». Secciones: {available}")
+        available = ", ".join(f"«{s.title}»" for s in every if s.level <= 3) or "(none)"
+        raise CairnError(f"There is no section «{name}». Sections: {available}")
     lines = text.splitlines()
-    return (f"(sección «{chosen.title}», líneas {chosen.start}-{chosen.end} de {len(lines)})\n"
+    return (f"(section «{chosen.title}», lines {chosen.start}-{chosen.end} of {len(lines)})\n"
             + _numbered(lines[chosen.start - 1:chosen.end], chosen.start))
 
 
@@ -95,19 +95,19 @@ def outline(text: str, max_chars: int) -> str:
         out.append(lines[title.start - 1])
     if tldr:
         out += ["", *lines[tldr.start - 1:tldr.end]]
-    out += ["", f"[doc largo: {len(text)} caracteres, {len(lines)} líneas (más de {max_chars}); "
-                "esto es el índice, no el doc]", "Secciones:"]
-    out += [f"{'  ' * (s.level - 1)}{'#' * s.level} {s.title}  (líneas {s.start}-{s.end}, "
-            f"{s.chars} caracteres)" for s in every if s.level > 1]
-    out += ["", "Pedir lo que haga falta: `seccion=\"<título>\"`, `lineas=\"A-B\"` (los números de "
-                "cairn_search sirven), o `completo=true` para el doc entero."]
+    out += ["", f"[long doc: {len(text)} characters, {len(lines)} lines (more than {max_chars}); "
+                "this is the outline, not the doc]", "Sections:"]
+    out += [f"{'  ' * (s.level - 1)}{'#' * s.level} {s.title}  (lines {s.start}-{s.end}, "
+            f"{s.chars} characters)" for s in every if s.level > 1]
+    out += ["", "Ask for what is needed: `seccion=\"<title>\"`, `lineas=\"A-B\"` (cairn_search's "
+                "numbers work), or `completo=true` for the whole doc."]
     return "\n".join(out)
 
 
 def view(text: str, section: str | None = None, lines: str | None = None,
          full: bool = False, max_chars: int = 8000) -> str:
     if section and lines:
-        raise CairnError("seccion o lineas, no las dos")
+        raise CairnError("seccion or lineas, not both")
     if lines:
         return line_range(text, lines)
     if section:

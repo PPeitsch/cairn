@@ -57,7 +57,7 @@ def test_config_remotes_and_peers(cfg):
 
 
 def test_invalid_config(cfg):
-    with pytest.raises(config.ConfigError, match="necesita `url`"):
+    with pytest.raises(config.ConfigError, match="needs `url`"):
         config.update(lambda raw: raw.update({"remotes": {"vps": {"key": "x"}}}))
 
 

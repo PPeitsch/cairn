@@ -54,7 +54,7 @@ CONFIG_NAME = "config.toml"
 DEFAULT_FILE_DIRS: tuple[str, ...] = ()
 DEFAULT_PRUNE = ("node_modules", ".git", "venv", ".venv", "__pycache__", ".tox", ".mypy_cache",
                  "site-packages")
-_HEADER = "# Configuración de cairn para este nodo. Ver `cairn --help`.\n\n"
+_HEADER = "# cairn configuration for this node. See `cairn --help`.\n\n"
 
 
 class ConfigError(Exception):
@@ -176,14 +176,14 @@ def _expand(p: str) -> Path:
 def _table(raw: dict, name: str, path: Path) -> dict:
     t = raw.get(name, {})
     if not isinstance(t, dict):
-        raise ConfigError(f"{path}: [{name}] tiene que ser una tabla")
+        raise ConfigError(f"{path}: [{name}] has to be a table")
     return t
 
 
 def load_raw() -> tuple[Path, dict]:
     path = config_path()
     if not path.is_file():
-        raise ConfigError(f"cairn no está inicializado en este nodo (falta {path}): correr `cairn init`")
+        raise ConfigError(f"cairn is not initialized on this node ({path} is missing): run `cairn init`")
     try:
         return path, tomllib.loads(path.read_text(encoding="utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
@@ -196,7 +196,7 @@ def _old_keys(t, where: str, path: Path) -> tuple[OldKey, ...]:
         return ()
     if not isinstance(t, dict) or not all(isinstance(v, dict) and v.get("key") and v.get("until")
                                           for v in t.values()):
-        raise ConfigError(f"{path}: [{where}.old.<n>] necesita `key` y `until`")
+        raise ConfigError(f"{path}: [{where}.old.<n>] needs `key` and `until`")
     return tuple(OldKey(str(v["key"]), str(v["until"]))
                  for _, v in sorted(t.items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0))
 
@@ -212,9 +212,9 @@ def _num(t: dict, key: str, default, kind, where: str, path: Path):
     try:
         n = kind(v)
     except (TypeError, ValueError):
-        raise ConfigError(f"{path}: [{where}] {key} tiene que ser un número: {v!r}") from None
+        raise ConfigError(f"{path}: [{where}] {key} has to be a number: {v!r}") from None
     if n <= 0:
-        raise ConfigError(f"{path}: [{where}] {key} tiene que ser mayor que 0: {v!r}")
+        raise ConfigError(f"{path}: [{where}] {key} has to be greater than 0: {v!r}")
     return n
 
 
@@ -231,7 +231,7 @@ def load() -> Config:
     path, raw = load_raw()
     node = _table(raw, "node", path).get("name", "")
     if not NODE_RE.match(str(node)):
-        raise ConfigError(f"{path}: [node] name inválido: {node!r}")
+        raise ConfigError(f"{path}: invalid [node] name: {node!r}")
     data = os.environ.get("CAIRN_DATA_DIR") or _table(raw, "data", path).get("path") \
         or str(default_data_dir())
     docs = _table(raw, "docs", path)
@@ -239,13 +239,13 @@ def load() -> Config:
     remotes = {}
     for name, r in _table(raw, "remotes", path).items():
         if not isinstance(r, dict) or not r.get("url"):
-            raise ConfigError(f"{path}: [remotes.{name}] necesita `url`")
+            raise ConfigError(f"{path}: [remotes.{name}] needs `url`")
         remotes[name] = Remote(name, str(r["url"]), _expand(r["key"]) if r.get("key") else None,
                                str(r["command"]) if r.get("command") else None)
     peers = {}
     for name, p in _table(raw, "peers", path).items():
         if not NODE_RE.match(name) or not isinstance(p, dict) or not p.get("key"):
-            raise ConfigError(f"{path}: [peers.{name}] inválido (nombre de nodo y `key`)")
+            raise ConfigError(f"{path}: invalid [peers.{name}] (node name and `key`)")
         peers[name] = Peer(name, str(p["key"]), str(p.get("ssh", "true")) != "false",
                            str(p["revoked"]) if p.get("revoked") else None,
                            _old_keys(p.get("old"), f"peers.{name}", path))
@@ -255,7 +255,7 @@ def load() -> Config:
     auto = str(sync.get("auto", "true")) != "false"
     mcp_name = str(cc.get("mcp_name") or "cairn")
     if not re.fullmatch(r"[A-Za-z0-9_-]+", mcp_name):
-        raise ConfigError(f"{path}: [claude_code] mcp_name inválido: {mcp_name!r}")
+        raise ConfigError(f"{path}: invalid [claude_code] mcp_name: {mcp_name!r}")
     return Config(
         path=path, node=node, data_dir=_expand(data), projects=_expand(projects),
         author=str(docs.get("author") or default_author()), remotes=remotes, peers=peers,
@@ -338,7 +338,7 @@ def update(fn) -> Config:
 def write(node: str, data_dir: str | None = None, projects: str | None = None,
           author: str | None = None) -> Path:
     if not NODE_RE.match(node):
-        raise ConfigError(f"nombre de nodo inválido: {node!r} (minúsculas, dígitos, `-` y `_`)")
+        raise ConfigError(f"invalid node name: {node!r} (lowercase letters, digits, `-` and `_`)")
     return save_raw({
         "node": {"name": node},
         "data": {"path": data_dir or str(default_data_dir())},

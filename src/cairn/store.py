@@ -45,7 +45,7 @@ class Writer:
         ev = Event.new(node=self.store.config.node, ts=clock.timestamp(), op=op, doc_id=doc_id,
                        payload=payload, prev=None if op in CREATE_OPS else prev)
         if ev.prev is None and prev is not None:
-            raise CairnError(f"{op}: el doc {doc_id} ya existe")
+            raise CairnError(f"{op}: the doc {doc_id} already exists")
         ev = Event(**{**ev.__dict__, "sig": keys.sign(self.store.key, ev.id)})
         self.events.append(ev)
         self.heads[doc_id] = ev.id
@@ -89,14 +89,14 @@ class Verifier:
         """Why the event is not accepted, or None if the signature is valid."""
         cands = self.keys.get(ev.node)
         if cands is None:
-            return f"evento {ev.id[:12]} de un nodo no autorizado ({ev.node}): `cairn authorize`"
+            return f"event {ev.id[:12]} from a node that is not authorized ({ev.node}): `cairn authorize`"
         for pub, until in cands:
             if keys.verify(pub, ev.id, ev.sig):
                 if until is not None and ev.ts > until:
-                    return (f"evento {ev.id[:12]} de {ev.node} firmado con una clave que se "
-                            f"reemplazó el {until[:10]}, con fecha posterior")
+                    return (f"event {ev.id[:12]} from {ev.node} signed with a key that was "
+                            f"replaced on {until[:10]}, dated after that")
                 return None
-        return f"evento {ev.id[:12]} de {ev.node} con firma inválida o sin firma"
+        return f"event {ev.id[:12]} from {ev.node} with an invalid signature or none"
 
 
 class Store:

@@ -115,10 +115,10 @@ def test_events_without_valid_signature_are_not_projected(cfg, peer):
     assert store.catch_up() == 0
     assert store.state(doc).body == "# x — tema\n"
     assert len(store.problems) == 3
-    assert any("no autorizado (intruso)" in p for p in store.problems)
-    assert sum("firma inválida" in p for p in store.problems) == 2
+    assert any("not authorized (intruso)" in p for p in store.problems)
+    assert sum("invalid signature" in p for p in store.problems) == 2
     from cairn import docs
-    assert len([p for p in docs.check(store) if "firma" in p or "autorizado" in p]) == 3
+    assert len([p for p in docs.check(store) if "signature" in p or "authorized" in p]) == 3
     store.close()
 
 
@@ -171,7 +171,7 @@ def test_corrupt_line_is_reported_and_skipped(store, cfg):
     with open(seg, "a") as f:
         f.write(json.dumps(line) + "\n")
     store.catch_up()
-    assert any("no coincide" in p for p in store.problems)
+    assert any("does not match" in p for p in store.problems)
     assert len(store.projection.doc_ids()) == 1
 
 

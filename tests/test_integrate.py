@@ -91,7 +91,7 @@ def test_idempotent(cc):
 def test_command_change_replaces(cc):
     integrate.claude_code(CMD)
     rep = integrate.claude_code(["ssh", "vps", "cairn"])
-    assert "sacar hook SessionStart: /opt/cairn/bin/cairn handoff hook" in rep.actions
+    assert "remove hook SessionStart: /opt/cairn/bin/cairn handoff hook" in rep.actions
     hooks = [h["command"] for g in settings(cc)["hooks"]["SessionStart"] for h in g["hooks"]]
     assert hooks == [WIP_DOC_HOOK["hooks"][0]["command"], "ssh vps cairn handoff hook"]
     assert integrate.registered_mcp() == {"type": "stdio", "command": "ssh",
@@ -134,7 +134,7 @@ def test_without_settings(cc):
 
 def test_invalid_settings_is_left_alone(cc):
     (cc / "settings.json").write_text("{roto")
-    with pytest.raises(integrate.CairnError, match="no es JSON válido"):
+    with pytest.raises(integrate.CairnError, match="is not valid JSON"):
         integrate.claude_code(CMD)
     assert (cc / "settings.json").read_text() == "{roto"
     assert calls(cc) == []
@@ -159,10 +159,10 @@ def test_recognizes_cairn_hooks():
 def test_cli(cc, capsys):
     assert cli.main(["integrate", "claude-code", "--command", "/opt/cairn/bin/cairn", "--dry-run"]) == 0
     out = capsys.readouterr().out
-    assert "[dry-run] agregar hook SessionStart" in out and "[dry-run] agregar MCP cairn" in out
+    assert "[dry-run] add hook SessionStart" in out and "[dry-run] add MCP cairn" in out
     assert cli.main(["integrate", "claude-code", "--command", "/opt/cairn/bin/cairn"]) == 0
     assert cli.main(["integrate", "claude-code", "--command", "/opt/cairn/bin/cairn"]) == 0
-    assert "ya estaba" in capsys.readouterr().out
+    assert "already there" in capsys.readouterr().out
 
 
 def test_wip_doc_unhook(cc, capsys):
@@ -172,7 +172,7 @@ def test_wip_doc_unhook(cc, capsys):
     assert (cc / "settings.json").read_text() == before
     assert cli.main(["migrate", "wip-doc", "unhook"]) == 0
     assert capsys.readouterr().out == (
-        "sacar hook SessionStart de wip-doc: /x/skills/wip-doc/driver.py handoff hook\n")
+        "remove wip-doc's SessionStart hook: /x/skills/wip-doc/driver.py handoff hook\n")
     hooks = [h["command"] for g in settings(cc)["hooks"]["SessionStart"] for h in g["hooks"]]
     assert hooks == ["/opt/cairn/bin/cairn handoff hook"] and settings(cc)["model"] == "x"
     assert wip_doc.unhook().actions == []
@@ -196,7 +196,7 @@ def test_systemd_installs_is_idempotent_and_removes(tmp_path, monkeypatch):
     assert "ExecStart=/opt/cairn/bin/cairn sync --quiet" in service
     assert "OnUnitActiveSec=15min" in timer and "WantedBy=timers.target" in timer
     assert calls == [("daemon-reload",), ("enable", "--now", "cairn-sync.timer")]
-    assert rep.actions[-1] == "activar cairn-sync.timer (cada 15 min)"
+    assert rep.actions[-1] == "enable cairn-sync.timer (every 15 min)"
 
     calls.clear()
     rep = integrate.systemd(cmd, interval=15)                # again: nothing to do

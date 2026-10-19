@@ -35,7 +35,7 @@ class Entry:
 class EventLog:
     def __init__(self, root: Path, node: str, segment_bytes: int = SEGMENT_BYTES):
         if not NODE_RE.match(node):
-            raise ValueError(f"nombre de nodo inválido: {node!r}")
+            raise ValueError(f"invalid node name: {node!r}")
         self.root = root
         self.node = node
         self.segment_bytes = segment_bytes
@@ -72,7 +72,7 @@ class EventLog:
             return
         for ev in events:
             if ev.node != self.node:
-                raise EventError(f"el nodo {self.node} no escribe eventos de {ev.node}")
+                raise EventError(f"node {self.node} does not write events of {ev.node}")
             ev.validate()
         path = self._current_segment()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,7 +106,7 @@ class EventLog:
                 try:
                     ev = Event.from_json(raw.decode("utf-8"))
                     if ev.node != node:
-                        raise EventError(f"evento de {ev.node} en el log de {node}")
+                        raise EventError(f"event of {ev.node} in the log of {node}")
                     yield Entry(node, segment, pos, end, ev)
                 except (EventError, UnicodeDecodeError) as e:
                     yield Entry(node, segment, pos, end, None, str(e))
@@ -145,16 +145,16 @@ class EventLog:
         `own`: the restore of a node that lost its data). Only if the local copy is exactly what
         the other side believed it was (`offset`): otherwise nothing is touched."""
         if node == self.node and not own:
-            raise EventError(f"el log de {node} sólo lo escribe {node}")
+            raise EventError(f"the log of {node} is only written by {node}")
         if not NODE_RE.match(node) or not (segment.isdigit() and len(segment) == 6):
-            raise EventError(f"segmento inválido: {node}/{segment}")
+            raise EventError(f"invalid segment: {node}/{segment}")
         if not data.endswith(b"\n"):
-            raise EventError("un bloque tiene que terminar en una línea completa")
+            raise EventError("a block has to end in a complete line")
         path = self.segment_path(node, segment)
         size = path.stat().st_size if path.exists() else 0
         if size != offset:
-            raise EventError(f"{node}/{segment}: se esperaba continuar desde el byte {offset} y "
-                             f"el log local tiene {size}")
+            raise EventError(f"{node}/{segment}: expected to continue from byte {offset} and "
+                             f"the local log has {size}")
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "ab") as f:
             f.write(data)

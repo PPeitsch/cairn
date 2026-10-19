@@ -46,7 +46,7 @@ def forced_command(command: list[str], node: str) -> str:
 def authorized_line(command: list[str], node: str, pub: str) -> str:
     cmd = forced_command(command, node)
     if '"' in cmd or "\\" in cmd:
-        raise CairnError(f"El comando de cairn no puede tener comillas ni barras invertidas: {cmd}")
+        raise CairnError(f"The cairn command cannot contain quotes or backslashes: {cmd}")
     return f'command="{cmd}",restrict {keys.normalize_public(pub)} cairn:{node}'
 
 
@@ -79,9 +79,9 @@ def _rewrite_authorized_keys(fn) -> bool:
 
 def _check_node(node: str, own: str) -> None:
     if not NODE_RE.match(node):
-        raise CairnError(f"Nombre de nodo inválido: {node!r}")
+        raise CairnError(f"Invalid node name: {node!r}")
     if node == own:
-        raise CairnError(f"{node} es este mismo nodo")
+        raise CairnError(f"{node} is this very node")
 
 
 def authorize(node: str, pub: str, ssh: bool = True, command: list[str] | None = None,
@@ -100,13 +100,13 @@ def authorize(node: str, pub: str, ssh: bool = True, command: list[str] | None =
     old = list(prev.old) if prev else []
     if prev and prev.key != key:
         if not prev.revoked and not replace:
-            raise CairnError(f"{node} ya está autorizado con otra clave. Si la cambió (`cairn key "
-                             f"--rotate`, o se reinstaló), `cairn authorize {node} <clave> --replace`: "
-                             "la anterior sigue verificando lo que ya firmó.")
+            raise CairnError(f"{node} is already authorized with another key. If it changed it (`cairn "
+                             f"key --rotate`, or it was reinstalled), `cairn authorize {node} <key> "
+                             "--replace`: the previous one keeps verifying what it already signed.")
         # revoked: `revoked` is a date; what was signed until the end of that day is valid
         until = f"{prev.revoked}T23:59:59.999999+00:00" if prev.revoked else clock.timestamp()
         old.append(config.OldKey(prev.key, until))
-        done.append(f"la clave anterior de {node} verifica sólo lo de antes de {until[:19]}")
+        done.append(f"the previous key of {node} only verifies what came before {until[:19]}")
 
     def mutate(raw):
         entry = {"key": key, "ssh": "true" if ssh else "false"}
@@ -114,7 +114,7 @@ def authorize(node: str, pub: str, ssh: bool = True, command: list[str] | None =
             entry["old"] = config.old_keys_table(old)
         raw.setdefault("peers", {})[node] = entry
     config.update(mutate)
-    done.insert(0, f"confianza en la clave de {node}: {key[:32]}…")
+    done.insert(0, f"trusting the key of {node}: {key[:32]}…")
     if ssh:
         from cairn.integrate import default_command
         line = authorized_line(command or default_command(), node, key)
@@ -122,12 +122,12 @@ def authorize(node: str, pub: str, ssh: bool = True, command: list[str] | None =
         def add(lines):
             return [ln for ln in lines if not _is_cairn_line(ln, node)] + [line]
         if _rewrite_authorized_keys(add):
-            done.append(f"acceso por ssh en {authorized_keys_path()} (sólo `sync-peer --as {node}`)")
+            done.append(f"ssh access in {authorized_keys_path()} (only `sync-peer --as {node}`)")
         else:
-            done.append(f"el acceso por ssh ya estaba en {authorized_keys_path()}")
+            done.append(f"the ssh access was already in {authorized_keys_path()}")
     else:
         if _rewrite_authorized_keys(lambda lines: [ln for ln in lines if not _is_cairn_line(ln, node)]):
-            done.append(f"sacado el acceso por ssh de {node}")
+            done.append(f"removed the ssh access of {node}")
     return done
 
 
@@ -155,9 +155,9 @@ def rotate_key(store) -> list[str]:
         store.key = new
         store.verifier = type(store.verifier)(store.config, new.public_key())
     line = keys.public_line(new.public_key(), cfg.node)
-    return [f"clave nueva de {cfg.node}: {line}",
-            f"la anterior queda en [node.old] para lo firmado hasta {until[:19]}",
-            f"en cada nodo que confía en este: `cairn authorize {cfg.node} '{line}' --replace`"]
+    return [f"new key of {cfg.node}: {line}",
+            f"the previous one stays in [node.old] for what was signed until {until[:19]}",
+            f"on every node that trusts this one: `cairn authorize {cfg.node} '{line}' --replace`"]
 
 
 def revoke(node: str) -> list[str]:
@@ -168,11 +168,11 @@ def revoke(node: str) -> list[str]:
         def mutate(raw):
             raw["peers"][node].update({"ssh": "false", "revoked": clock.today()})
         config.update(mutate)
-        done.append(f"{node}: revocado (sus eventos nuevos se rechazan; los que ya están siguen)")
+        done.append(f"{node}: revoked (its new events are rejected; the ones already here stay)")
     if _rewrite_authorized_keys(lambda lines: [ln for ln in lines if not _is_cairn_line(ln, node)]):
-        done.append(f"{node}: sacado de {authorized_keys_path()}")
+        done.append(f"{node}: removed from {authorized_keys_path()}")
     if not done:
-        raise CairnError(f"{node} no está autorizado")
+        raise CairnError(f"{node} is not authorized")
     return done
 
 
@@ -190,14 +190,14 @@ def parse_url(url: str) -> tuple[str, str | None]:
     """`ssh://[user@]host[:port]` → (ssh destination, port)."""
     u = urlsplit(url)
     if u.scheme != "ssh" or not u.hostname or u.path not in ("", "/"):
-        raise CairnError(f"URL de remoto inválida: {url!r} (se espera ssh://usuario@host[:puerto])")
+        raise CairnError(f"Invalid remote URL: {url!r} (expected ssh://user@host[:port])")
     dest = f"{u.username}@{u.hostname}" if u.username else u.hostname
     return dest, str(u.port) if u.port else None
 
 
 def remote_add(name: str, url: str, key: str | None = None, command: str | None = None) -> config.Config:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
-        raise CairnError(f"Nombre de remoto inválido: {name!r}")
+        raise CairnError(f"Invalid remote name: {name!r}")
     parse_url(url)
     entry = {"url": url}
     if key:
@@ -209,5 +209,5 @@ def remote_add(name: str, url: str, key: str | None = None, command: str | None 
 
 def remote_remove(name: str) -> config.Config:
     if name not in config.load().remotes:
-        raise CairnError(f"No hay un remoto {name}")
+        raise CairnError(f"There is no remote {name}")
     return config.update(lambda raw: raw["remotes"].pop(name))

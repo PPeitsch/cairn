@@ -122,9 +122,9 @@ def find(store: Store, ref: str) -> Doc:
     if not rows and re.fullmatch(r"[0-9a-f]{6,32}", name):
         rows = store.projection.db.execute("SELECT * FROM docs WHERE id LIKE ?", (name + "%",)).fetchall()
     if not rows:
-        raise CairnError(f"No encontrado: {ref}")
+        raise CairnError(f"Not found: {ref}")
     if len(rows) > 1:
-        raise CairnError(f"{ref} es ambiguo: " + ", ".join(f"{r['name']} ({r['id'][:8]})" for r in rows))
+        raise CairnError(f"{ref} is ambiguous: " + ", ".join(f"{r['name']} ({r['id'][:8]})" for r in rows))
     return _doc_from_row(store, rows[0])
 
 
@@ -135,7 +135,7 @@ def name_taken(store: Store, name: str) -> bool:
 def _check_name_parts(*parts: str) -> None:
     for p in parts:
         if not _NAME_RE.match(p):
-            raise CairnError(f"Nombre inválido: {p!r} (letras, dígitos, `_`, `-`, `.`, `+`)")
+            raise CairnError(f"Invalid name: {p!r} (letters, digits, `_`, `-`, `.`, `+`)")
 
 
 # ──────────────────────────────────────────────────────────────── render
@@ -169,12 +169,12 @@ def repo_label(doc: Doc) -> str:
 
 def estado_label(doc: Doc) -> str:
     if doc.scope == "wip":
-        return "pendiente" if doc.tipo == "handoff" else "abierto"
+        return "pending" if doc.tipo == "handoff" else "open"
     if doc.scope == "ref":
-        return "referencia"
+        return "reference"
     if doc.tipo == "handoff":
         return f"{doc.meta.get('estado', 'usada')} {fmt_date(doc.date_closed())}"
-    return f"cerrado {fmt_date(doc.date_closed())}"
+    return f"closed {fmt_date(doc.date_closed())}"
 
 
 # ──────────────────────────────────────────────────────────────── new / close / reopen
@@ -201,9 +201,10 @@ def _meta_base(store: Store, tipo: str, estado: str | None, repo: str) -> dict:
 
 def new(store: Store, area: str, tema: str, tipo: str = "infra", repo: str = "") -> Result:
     if tipo == "handoff":
-        raise CairnError("Un handoff se crea con: handoff new <area> <tema> [--para R]... [--plan <doc>]...")
+        raise CairnError("A handoff is created with: handoff new <area> <tema> [--para R]... "
+                         "[--plan <doc>]...")
     if tipo not in TIPOS:
-        raise CairnError(f"Tipo inválido: {tipo}. Opciones: {', '.join(TIPOS)}")
+        raise CairnError(f"Invalid type: {tipo}. Options: {', '.join(TIPOS)}")
     _check_name_parts(area, tema)
     title = f"{area} — {tema.replace('_', ' ')}"
     if tipo == "ref":
@@ -219,7 +220,7 @@ def new(store: Store, area: str, tema: str, tipo: str = "infra", repo: str = "")
     doc_id = new_doc_id()
     with store.writer() as w:
         if name_taken(store, name):
-            raise CairnError(f"Ya existe: {name}")
+            raise CairnError(f"Already exists: {name}")
         w.emit("create", doc_id, {"name": name, "meta": meta, "body": body})
     return Result(get(store, doc_id))
 
@@ -228,38 +229,40 @@ def close(store: Store, ref: str, force: bool = False, descartar: str | None = N
     """Closes a finished doc (resuelto/completado) or, with `descartar` (the reason), one that is
     left unfinished: it becomes `descartado` with the reason in `nota:`, and needs no --force."""
     if descartar is not None and not descartar.strip():
-        raise CairnError("Descartar pide un motivo: es lo único que va a explicar por qué quedó así.")
+        raise CairnError("Discarding needs a reason: it is the only thing that will explain why it "
+                         "was left that way.")
     warnings: list[str] = []
     with store.writer() as w:
         doc = find(store, ref)
         if doc.tipo == "handoff":
-            raise CairnError(f"{doc.name} es un handoff: se archiva con `handoff take` (usarlo) o "
-                             "`handoff drop` (descartarlo).")
+            raise CairnError(f"{doc.name} is a handoff: it is archived with `handoff take` (to use "
+                             "it) or `handoff drop` (to discard it).")
         if doc.scope == "ref":
-            raise CairnError(f"{doc.name} es una referencia: no se cierra, se actualiza.")
+            raise CairnError(f"{doc.name} is a reference: it is not closed, it is updated.")
         if doc.scope == "done":
-            raise CairnError(f"{doc.name} ya está cerrado ({doc.date_closed()}).")
+            raise CairnError(f"{doc.name} is already closed ({doc.date_closed()}).")
         # a doc with an open checklist is not done: closing it removes it from `list` and reports
         # it in `weekly` as finished work, which is exactly what it is not
         pend = pending_items(doc.body)
         if descartar:
             if doc.meta.get("nota"):
-                warnings.append(f"[nota] Nota reemplazada por el motivo: \"{doc.meta['nota']}\"")
+                warnings.append(f"[note] Note replaced by the reason: \"{doc.meta['nota']}\"")
             w.emit("close", doc.id, {"set": {"estado": "descartado", "cerrado": clock.today(),
                                              "nota": descartar.strip()},
                                      "unset": ["reabierto"]})
         elif pend and not force:
             lines = "\n".join(f"    {n}: {t}" for n, t in pend[:10])
-            raise CairnError(f"[aviso] {doc.name} tiene {len(pend)} pendiente(s) sin tildar:\n{lines}\n\n"
-                             f"Tildalos, borralos, cerralo igual con: close {doc.name} --force, o, si "
-                             f"se deja sin terminar: close {doc.name} --descartar \"motivo\"")
+            raise CairnError(f"[warning] {doc.name} has {len(pend)} unchecked pending item(s):\n"
+                             f"{lines}\n\nCheck them, delete them, close it anyway with: close "
+                             f"{doc.name} --force, or, if it is left unfinished: close {doc.name} "
+                             "--descartar \"reason\"")
         else:
             if doc.meta.get("nota"):
                 # the note described the open work ("low priority", "reopened because…"); once closed, it lies
-                warnings.append(f"[nota] Nota descartada al cerrar: \"{doc.meta['nota']}\" — si tenía "
-                                "info del cierre, pasala al cuerpo del doc.")
+                warnings.append(f"[note] Note dropped on closing: \"{doc.meta['nota']}\" — if it had "
+                                "information about the closing, move it to the doc's body.")
             if pend:
-                warnings.append(f"[aviso] Cerrado con {len(pend)} pendiente(s) sin tildar (--force)")
+                warnings.append(f"[warning] Closed with {len(pend)} unchecked pending item(s) (--force)")
             estado = "completado" if doc.tipo == "plan" else "resuelto"
             w.emit("close", doc.id, {"set": {"estado": estado, "cerrado": clock.today()},
                                      "unset": ["nota", "reabierto"]})
@@ -271,7 +274,7 @@ def reopen(store: Store, ref: str, motivo: str | None = None) -> Result:
     with store.writer() as w:
         doc = find(store, ref)
         if doc.scope != "done":
-            raise CairnError(f"{doc.name} no está cerrado (está en {doc.scope}).")
+            raise CairnError(f"{doc.name} is not closed (it is in {doc.scope}).")
         if doc.tipo == "handoff":
             # taken by mistake, or the conversation was cut short: it waits for the next one again
             change = {"set": {"estado": "pendiente"}, "unset": ["usada", "descartada", "cerrado"]}
@@ -282,12 +285,19 @@ def reopen(store: Store, ref: str, motivo: str | None = None) -> Result:
             change["set"]["nota"] = motivo
         else:
             change["unset"].append("nota")
-            warnings.append("[nota] Sin motivo — pasalo como 2º argumento para que quede en la nota")
+            warnings.append("[note] No reason: pass it as the 2nd argument so it stays in the note")
         w.emit("reopen", doc.id, change)
     return Result(get(store, doc.id), warnings)
 
 
 # ──────────────────────────────────────────────────────────────── promote
+
+# the sections `promote` carries over by default (plan / diagnosis), each one in English or as
+# the Spanish templates named it
+PROMOTE_DEFAULTS = {
+    True: [("Design", "Diseño"), ("Decisions", "Decisiones")],
+    False: [("Context", "Contexto"), ("Useful commands", "Comandos útiles")],
+}
 
 def promote(store: Store, ref: str, area: str, tema: str, secciones: list[str] | None = None,
             force: bool = False) -> Result:
@@ -299,36 +309,36 @@ def promote(store: Store, ref: str, area: str, tema: str, secciones: list[str] |
     with store.writer() as w:
         src = find(store, ref)
         if src.scope == "ref":
-            raise CairnError(f"{src.name} ya es una referencia: promote toma docs abiertos o cerrados.")
+            raise CairnError(f"{src.name} is already a reference: promote takes open or closed docs.")
         ref_name = f"{area}_{tema}"
-        secciones = secciones or (["Diseño", "Decisiones"] if src.tipo == "plan"
-                                  else ["Contexto", "Comandos útiles"])
+        secciones = secciones or [next((x for x in alts if section_raw(src.body, x)), alts[0])
+                                   for alts in PROMOTE_DEFAULTS[src.tipo == "plan"]]
         target = None
         if name_taken(store, ref_name):
             target = find(store, ref_name)
             if target.scope != "ref":
-                raise CairnError(f"{ref_name} existe y no es una referencia.")
+                raise CairnError(f"{ref_name} exists and is not a reference.")
             if not force and ["origen", src.id] in target.links:
-                raise CairnError(f"{ref_name} ya tiene secciones promovidas de {src.name}. "
-                                 "--force para agregar igual.")
+                raise CairnError(f"{ref_name} already has sections promoted from {src.name}. "
+                                 "--force to add them anyway.")
 
         # gather first: if there is nothing to carry over, nothing is created or touched
         block, carried, skipped = "", [], []
         for s in secciones:
             raw = section_raw(src.body, s)
             if not raw:
-                skipped.append(f"{s} (no existe)")
+                skipped.append(f"{s} (does not exist)")
                 continue
             heading, content = raw
             content = COMMENT.sub("", content).strip("\n")
             if is_placeholder(content):
-                skipped.append(f"{heading} (vacía)")
+                skipped.append(f"{heading} (empty)")
                 continue
             carried.append(heading)
             block += f"\n---\n\n## {heading}\n\n{content.strip()}\n"
         if not carried:
-            raise CairnError(f"Nada para promover de {src.name}: {', '.join(skipped)}\n"
-                             "Elegí secciones con --seccion \"<inicio del título>\".")
+            raise CairnError(f"Nothing to promote from {src.name}: {', '.join(skipped)}\n"
+                             "Pick sections with --seccion \"<start of the title>\".")
 
         created = target is None
         if created:
@@ -345,13 +355,14 @@ def promote(store: Store, ref: str, area: str, tema: str, secciones: list[str] |
         if ["referencias", ref_id] not in src.links:
             w.emit("link", src.id, {"link_add": [["referencias", ref_id]]})
     if skipped:
-        warnings.append(f"  salteadas: {', '.join(skipped)}")
+        warnings.append(f"  skipped: {', '.join(skipped)}")
     if created:
-        warnings.append("[nota] Referencia nueva: completá el TL;DR y reescribí lo copiado como "
-                        "referencia\n    (lo que ES, no lo que pasó) — sacá el contexto del incidente "
-                        "que no aplique.")
+        warnings.append("[note] New reference: fill in the TL;DR and rewrite what was copied as a "
+                        "reference\n    (what IS, not what happened); remove the incident's context "
+                        "that does not apply.")
     else:
-        warnings.append("[nota] Revisá que lo agregado no contradiga lo que la referencia ya decía.")
+        warnings.append("[note] Check that what was added does not contradict what the reference "
+                        "already said.")
     return Result(get(store, ref_id), warnings, {"carried": carried})
 
 
@@ -369,7 +380,7 @@ def search(store: Store, pattern: str, scopes: tuple[str, ...] = SCOPES) -> tupl
     try:
         rx = re.compile(pattern, re.I)
     except re.error as e:
-        raise CairnError(f"Regex inválida: {e}") from None
+        raise CairnError(f"Invalid regex: {e}") from None
     docs = all_docs(store, scopes)
     hits = []
     for doc in docs:
@@ -401,13 +412,13 @@ def search_fts(store: Store, query: str, scopes: tuple[str, ...] = SCOPES,
             "ORDER BY bm25(docs_fts) LIMIT ?", (query, *scopes, limit)).fetchall()
         total = store.projection.db.execute(f"SELECT count(*) {where}", (query, *scopes)).fetchone()[0]
     except sqlite3.OperationalError as e:      # invalid FTS5 syntax
-        raise CairnError(f"Consulta FTS inválida: {e}") from None
+        raise CairnError(f"Invalid FTS query: {e}") from None
     return [FtsHit(_doc_from_row(store, r), " ".join(r["snippet"].split())) for r in rows], total
 
 
 def fts_header(query: str, hits: list[FtsHit], total: int) -> str:
-    cut = f"; se muestran los {len(hits)} más relevantes" if total > len(hits) else ""
-    return f'Búsqueda FTS "{query}": {total} doc(s), por relevancia{cut}'
+    cut = f"; showing the {len(hits)} most relevant" if total > len(hits) else ""
+    return f'FTS search "{query}": {total} doc(s), by relevance{cut}'
 
 
 def weekly(store: Store, dias: int = 7) -> tuple[str, list[Doc]]:
@@ -434,40 +445,40 @@ def check(store: Store) -> list[str]:
             in_log += 1
     projected = store.projection.count_events()
     if projected != in_log:
-        problems.append(f"la proyección tiene {projected} evento(s) y el log {in_log} — "
-                        "correr `cairn rebuild`")
+        problems.append(f"the projection has {projected} event(s) and the log {in_log}: "
+                        "run `cairn rebuild`")
     db = store.projection.db
     for r in db.execute("SELECT status, count(*) n FROM events WHERE status NOT IN ('applied', 'resolved') "
                       "GROUP BY status"):
-        what = {"divergent": "en ramas divergentes (dos nodos escribieron sobre el mismo head)",
-                "orphan": "huérfanos (falta el evento anterior: sincronizar)"}.get(r["status"], r["status"])
-        problems.append(f"{r['n']} evento(s) {what}")
+        what = {"divergent": "on divergent branches (two nodes wrote on top of the same head)",
+                "orphan": "orphaned (the previous event is missing: sync)"}.get(r["status"], r["status"])
+        problems.append(f"{r['n']} event(s) {what}")
     for r in db.execute("SELECT name, count(*) n FROM docs GROUP BY name HAVING n > 1"):
-        problems.append(f"{r['name']}: {r['n']} docs con el mismo nombre")
+        problems.append(f"{r['name']}: {r['n']} docs with the same name")
     ids = {r["id"] for r in db.execute("SELECT id FROM docs")}
     for doc in all_docs(store):
         n = doc.name
         if doc.divergent:
-            problems.append(f"{n} tiene ramas divergentes: `cairn resolve {n}` para verlas y elegir")
+            problems.append(f"{n} has divergent branches: `cairn resolve {n}` to see them and pick one")
         if doc.meta.get("tipo") not in TIPOS_DOC:
-            problems.append(f"{n} tiene tipo '{doc.meta.get('tipo', '')}' (válidos: {', '.join(TIPOS_DOC)})")
+            problems.append(f"{n} has type '{doc.meta.get('tipo', '')}' (valid: {', '.join(TIPOS_DOC)})")
         if doc.scope != "ref":
             if not re.match(r"^\d{4}-\d{2}-\d{2}_", n):
-                problems.append(f"{n} no arranca con fecha YYYY-MM-DD_")
+                problems.append(f"{n} does not start with a YYYY-MM-DD_ date")
             if doc.estado not in OPEN_STATES | CLOSED_STATES:
-                problems.append(f"{n} tiene estado '{doc.estado}' (desconocido)")
+                problems.append(f"{n} has status '{doc.estado}' (unknown)")
         if doc.tipo == "handoff":
             if doc.scope == "done" and not (doc.meta.get("usada") or doc.meta.get("descartada")):
-                problems.append(f"{n} es un handoff archivado sin `usada:` ni `descartada:`")
+                problems.append(f"{n} is an archived handoff without `usada:` or `descartada:`")
             age = handoff_age(doc)
             if doc.scope == "wip" and age is not None and age > store.config.handoff_stale_days:
-                problems.append(f"{n} es un handoff sin tomar hace {age} días — "
-                                "`handoff take` o `handoff drop`")
+                problems.append(f"{n} is a handoff not taken for {age} days: "
+                                "`handoff take` or `handoff drop`")
         elif doc.scope == "done" and not doc.meta.get("cerrado"):
-            problems.append(f"{n} está cerrado sin `cerrado:` — weekly cae a la última modificación")
+            problems.append(f"{n} is closed without `cerrado:`: weekly falls back to the last change")
         for kind, dst in doc.links:
             if dst not in ids:
-                problems.append(f"{n}: el link `{kind}` apunta a un doc que no existe ({dst[:8]})")
+                problems.append(f"{n}: the `{kind}` link points to a doc that does not exist ({dst[:8]})")
     return problems
 
 
@@ -509,7 +520,7 @@ def modified_date(doc: Doc) -> date:
 def modified_label(doc: Doc) -> str:
     d = modified_date(doc)
     days = (date.fromisoformat(clock.today()) - d).days
-    return f"modificado {d.isoformat()}, " + ("hoy" if days <= 0 else f"hace {days} día(s)")
+    return f"modified {d.isoformat()}, " + ("today" if days <= 0 else f"{days} day(s) ago")
 
 
 def grouped_by_repo(docs_: list[Doc]) -> list[str]:
@@ -519,8 +530,8 @@ def grouped_by_repo(docs_: list[Doc]) -> list[str]:
     groups: dict[str, list[Doc]] = {}
     for d in docs_:
         groups.setdefault(repo_label(d), []).append(d)
-    out = [f"{len(docs_)} doc(s) en {len(groups)} repo(s); grupos y docs del modificado más "
-           "recientemente al más viejo"]
+    out = [f"{len(docs_)} doc(s) in {len(groups)} repo(s); groups and docs from the most recently "
+           "modified to the oldest"]
     for repo, ds in groups.items():
         out += ["", f"{repo} ({len(ds)})"]
         out += [f"  {d.name}  [{d.tipo} · {estado_label(d)} · {modified_label(d)}]" for d in ds]
@@ -532,9 +543,9 @@ def handoff_line(doc: Doc, stale: int = 14) -> str:
     age = handoff_age(doc)
     parts = [f"para: {', '.join(handoff_para(doc)) or 'cross-repo'}"]
     if age is not None:
-        parts.append("de hoy" if age == 0 else f"hace {age} día(s)")
+        parts.append("from today" if age == 0 else f"{age} day(s) old")
         if age > stale:
-            parts.append("VIEJA: revisar si sigue valiendo")
+            parts.append("OLD: check whether it still holds")
     return f"{doc.name}  ({'; '.join(parts)})"
 
 
@@ -549,15 +560,15 @@ def handoff_new(store: Store, area: str, tema: str, para: list[str] | None = Non
     doc_id = new_doc_id()
     with store.writer() as w:
         if name_taken(store, name):
-            raise CairnError(f"Ya existe: {name}")
+            raise CairnError(f"Already exists: {name}")
         links = [["plan", find(store, p).id] for p in plans]
         body = templates.body(store.config.templates_dir, "handoff",
                               f"{area} — handoff: {tema.replace('_', ' ')}")
         w.emit("handoff_new", doc_id, {"name": name, "meta": meta, "body": body, "links": links})
     warnings = []
     if not (para or repo):
-        warnings.append("[nota] Sin `repo:` ni `--para`: el aviso sólo aparece en conversaciones "
-                        "abiertas en la raíz de proyectos.")
+        warnings.append("[note] No `repo:` and no `--para`: it is only announced in conversations "
+                        "opened in the projects root.")
     return Result(get(store, doc_id), warnings)
 
 
@@ -565,17 +576,18 @@ def _pick_handoff(store: Store, ref: str | None, repo: str) -> Doc:
     if ref:
         doc = find(store, ref)
         if doc.tipo != "handoff":
-            raise CairnError(f"{doc.name} no es un handoff (tipo: {doc.meta.get('tipo', '?')}).")
+            raise CairnError(f"{doc.name} is not a handoff (type: {doc.meta.get('tipo', '?')}).")
         if doc.estado != "pendiente":
-            raise CairnError(f"{doc.name} ya no está pendiente: {doc.estado} el {doc.date_closed()} "
-                             "(la tomó otra conversación o se descartó). `reopen` la vuelve a pendiente.")
+            raise CairnError(f"{doc.name} is no longer pending: {doc.estado} on {doc.date_closed()} "
+                             "(another conversation took it, or it was discarded). `reopen` makes "
+                             "it pending again.")
         return doc
     pend = pending_handoffs(store, repo)
-    where = repo or "la raíz de proyectos"
+    where = repo or "the projects root"
     if not pend:
-        raise CairnError(f"No hay handoffs pendientes para {where}.")
+        raise CairnError(f"No pending handoffs for {where}.")
     if len(pend) > 1:
-        raise CairnError(f"Hay {len(pend)} handoffs pendientes para {where}; decí cuál:\n"
+        raise CairnError(f"There are {len(pend)} pending handoffs for {where}; say which one:\n"
                          + "\n".join(f"  {handoff_line(d, store.config.handoff_stale_days)}" for d in pend))
     return pend[0]
 
@@ -601,21 +613,21 @@ def handoff_take(store: Store, ref: str | None = None, repo: str = "") -> Result
     warnings = []
     age = handoff_age(doc)
     if age is not None and age > store.config.handoff_stale_days:
-        warnings.append(f"La nota tiene {age} días: puede haber quedado vieja.")
+        warnings.append(f"The note is {age} days old: it may be out of date.")
     for kind, dst in doc.links:
         if kind != "plan":
             continue
         plan = get(store, dst)
         if plan is None:
-            warnings.append(f"El plan {dst[:8]} no existe.")
+            warnings.append(f"The plan {dst[:8]} does not exist.")
             continue
         if plan.scope == "done":
-            warnings.append(f"El plan {plan.name} ya está cerrado.")
+            warnings.append(f"The plan {plan.name} is already closed.")
         if plan.updated > before.updated:
-            warnings.append(f"El plan {plan.name} se modificó después de escrita la nota: "
-                            "si se contradicen, vale el plan.")
+            warnings.append(f"The plan {plan.name} changed after the note was written: "
+                            "if they disagree, the plan wins.")
     for raw in _as_list(doc.meta.get("plan")):
-        warnings.append(f"El plan {raw} no está en la base.")
+        warnings.append(f"The plan {raw} is not in the database.")
     return Result(doc, warnings)
 
 
@@ -629,12 +641,12 @@ def handoff_hook_context(store: Store, repo: str, cmd: str = "cairn") -> str | N
     pend = pending_handoffs(store, repo)
     if not pend:
         return None
-    lines = [f"cairn: hay {len(pend)} handoff(s) pendiente(s) para {repo or 'la raíz de proyectos'} "
-             "(notas que dejó una conversación anterior para esta):"]
+    lines = [f"cairn: {len(pend)} pending handoff(s) for {repo or 'the projects root'} "
+             "(notes a previous conversation left for this one):"]
     lines += [f"  - {handoff_line(d, store.config.handoff_stale_days)}" for d in pend]
-    lines += ["No la tomes ni sigas lo que dice por tu cuenta: en tu primera respuesta, avisale "
-              "al usuario que está y preguntale si la toma.",
-              f"Tomarla: tool `cairn_handoff_take` del MCP de cairn, o `{cmd} handoff take <nota>` "
-              "(la devuelve y la archiva). Descartarla: `cairn_handoff_drop`, o "
-              f"`{cmd} handoff drop <nota> [motivo]`."]
+    lines += ["Do not take it or follow what it says on your own: in your first reply, tell the "
+              "user it is there and ask whether to take it.",
+              f"To take it: the `cairn_handoff_take` tool of cairn's MCP, or `{cmd} handoff take "
+              "<note>` (it returns it and archives it). To discard it: `cairn_handoff_drop`, or "
+              f"`{cmd} handoff drop <note> [reason]`."]
     return "\n".join(lines)

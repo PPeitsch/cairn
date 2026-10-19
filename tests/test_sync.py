@@ -154,7 +154,7 @@ def test_relay_and_unknown_nodes(pair, nodes):
     aws.new("demo", "desde_aws")
     assert run_sync(aws, vps)[0].ok
     res, _ = run_sync(laptop, vps)                    # laptop does not know aws
-    assert not res.ok and any("aws" in e and "no está autorizado" in e for e in res.errors)
+    assert not res.ok and any("aws" in e and "is not authorized" in e for e in res.errors)
     assert "2026-03-10_demo_desde_aws" not in laptop.names()
     laptop.trust(aws)
     res, _ = run_sync(laptop, vps)
@@ -166,14 +166,14 @@ def test_unauthorized_client(pair, nodes):
     intruso = nodes("intruso")
     intruso.trust(vps)
     res, srv = run_sync(intruso, vps)
-    assert isinstance(res, ProtocolError) and "no está autorizado en vps" in str(res)
+    assert isinstance(res, ProtocolError) and "is not authorized on vps" in str(res)
     assert not srv.ok
 
 
 def test_identity_pinned_by_authorized_keys(pair):
     laptop, vps = pair
     res, _ = run_sync(laptop, vps, as_node="otro")
-    assert isinstance(res, ProtocolError) and "la clave es de otro" in str(res)
+    assert isinstance(res, ProtocolError) and "the key belongs to otro" in str(res)
     res, _ = run_sync(laptop, vps, as_node="laptop")
     assert res.ok
 
@@ -200,7 +200,7 @@ def test_nobody_writes_another_nodes_log(pair):
         size = (s.config.logs_dir / "laptop" / "000001.jsonl").stat().st_size
         n, errors = receive(s, [{"node": "laptop", "segment": "000001", "offset": size,
                                  "data": base64.b64encode(json.dumps(ev).encode() + b"\n").decode()}])
-    assert n == 0 and any("sólo lo escribe él" in e for e in errors)
+    assert n == 0 and any("only it writes that log" in e for e in errors)
     assert "inyectado" not in laptop.names()
 
 
@@ -225,7 +225,7 @@ def test_forged_event_is_rejected(pair, nodes):
     d.mkdir(parents=True)
     (d / "000001.jsonl").write_text(json.dumps(ev, separators=(",", ":"), sort_keys=True) + "\n")
     res, _ = run_sync(laptop, vps)
-    assert any("firma inválida" in e for e in res.errors)
+    assert any("invalid signature" in e for e in res.errors)
     assert "2026-03-10_demo_legitimo" not in laptop.names()
 
 
@@ -234,7 +234,7 @@ def test_revoked(pair):
     vps.use()
     access.revoke("laptop")
     res, _ = run_sync(laptop, vps)
-    assert isinstance(res, ProtocolError) and "no está autorizado en vps" in str(res)
+    assert isinstance(res, ProtocolError) and "is not authorized on vps" in str(res)
 
 
 def test_copies_that_are_not_a_prefix(pair):
@@ -247,7 +247,7 @@ def test_copies_that_are_not_a_prefix(pair):
     seg.write_bytes(bytes(data))
     laptop.new("demo", "y")
     res, _ = run_sync(laptop, vps)
-    assert any("no es un prefijo" in e for e in res.errors)
+    assert any("is not a prefix" in e for e in res.errors)
 
 
 def test_broken_line_at_origin_is_copied_not_projected(pair):
@@ -285,9 +285,9 @@ def test_authorize_another_key_for_the_same_node(nodes):
     laptop, vps, otro = nodes("laptop"), nodes("vps"), nodes("otro")
     vps.trust(laptop)
     vps.use()
-    with pytest.raises(cli.CairnError, match="otra clave"):
+    with pytest.raises(cli.CairnError, match="another key"):
         access.authorize("laptop", otro.pub, ssh=False)
-    with pytest.raises(cli.CairnError, match="este mismo nodo"):
+    with pytest.raises(cli.CairnError, match="this very node"):
         access.authorize("vps", otro.pub)
 
 
@@ -295,7 +295,7 @@ def test_remotes(nodes):
     nodes("laptop")
     access.remote_add("vps", "ssh://cairn@host:2222")
     assert config.load().remotes["vps"].url == "ssh://cairn@host:2222"
-    with pytest.raises(cli.CairnError, match="URL de remoto inválida"):
+    with pytest.raises(cli.CairnError, match="Invalid remote URL"):
         access.remote_add("x", "cairn@host")
     access.remote_remove("vps")
     assert config.load().remotes == {}
@@ -323,7 +323,7 @@ def test_cli_sync_over_fake_ssh(pair, tmp_path, monkeypatch, capsys):
     laptop.use()
     access.remote_add("vps", "ssh://cairn@vps.example")
     assert cli.main(["sync"]) == 0, capsys.readouterr()
-    assert "vps (vps): 1 enviado(s), 1 recibido(s)" in capsys.readouterr().out
+    assert "vps (vps): 1 sent, 1 received" in capsys.readouterr().out
     assert laptop.names() == vps.names()
     laptop.use()
     assert cli.main(["sync", "--quiet"]) == 0
@@ -352,13 +352,13 @@ def test_resolve_keep_the_branch(pair, capsys):
     laptop.use()
     assert cli.main(["resolve", name]) == 0
     out = capsys.readouterr().out
-    assert "1 rama(s) divergente(s)" in out and "(2 evento(s): edit, edit)" in out
+    assert "1 divergent branch(es)" in out and "(2 event(s): edit, edit)" in out
     assert "+# vps 2" in out
     with laptop.store() as s:
         [rama] = history.branches(s, docs.find(s, name))
         tip = rama.tip.id
     assert cli.main(["resolve", name, "--keep", tip[:8]]) == 0
-    assert "2 evento(s)" in capsys.readouterr().out
+    assert "2 event(s)" in capsys.readouterr().out
     run_sync(laptop, vps)
     for n in (laptop, vps):
         with n.store() as s:
@@ -375,7 +375,7 @@ def test_resolve_keep_the_main_chain(pair):
         d, n = history.resolve(s, name, "main")
         assert n == 2 and not d.divergent and d.body == "# laptop\n"
         assert docs.check(s) == []
-        with pytest.raises(cli.CairnError, match="no tiene ramas divergentes"):
+        with pytest.raises(cli.CairnError, match="has no divergent branches"):
             history.resolve(s, name, "main")
 
 
@@ -383,7 +383,7 @@ def test_resolve_hash_that_is_not_a_branch(pair):
     from cairn import history
     laptop, vps = pair
     name = _divergir(laptop, vps)
-    with laptop.store() as s, pytest.raises(cli.CairnError, match="no es la punta"):
+    with laptop.store() as s, pytest.raises(cli.CairnError, match="is not the tip"):
         history.resolve(s, name, "0000")
 
 
@@ -408,13 +408,13 @@ def test_rotate_and_replace_keep_the_old(pair, capsys):
         new_pub = s.public_line()
     at(laptop, "2026-03-11T12:00:00+00:00").new("demo", "despues")
     res, _ = run_sync(laptop, vps)                    # the vps does not know the new key yet
-    assert any("firma inválida" in e for e in res.errors)
+    assert any("invalid signature" in e for e in res.errors)
 
     at(vps, "2026-03-11T10:00:00+00:00")
     with pytest.raises(cli.CairnError, match="--replace"):
         access.authorize("laptop", new_pub, ssh=True, command=["/opt/cairn"])
     hecho = access.authorize("laptop", new_pub, ssh=True, command=["/opt/cairn"], replace=True)
-    assert any("la clave anterior de laptop" in h for h in hecho)
+    assert any("the previous key of laptop" in h for h in hecho)
     peer = config.load().peers["laptop"]
     assert [k.until[:10] for k in peer.old] == ["2026-03-11"]
     res, _ = run_sync(laptop, vps)
@@ -431,7 +431,7 @@ def test_rotate_and_replace_keep_the_old(pair, capsys):
         ev = Event.new(node="laptop", ts="2026-03-12T00:00:00.000000+00:00", op="edit",
                        doc_id=head.id, payload={"body": "# falso\n"}, prev=s.projection.head(head.id))
         ev = Event(**{**ev.__dict__, "sig": keys.sign(old_priv, ev.id)})
-        assert "se reemplazó el 2026-03-11" in s.verifier.problem(ev)
+        assert "replaced on 2026-03-11" in s.verifier.problem(ev)
         viejo = Event(**{**ev.__dict__, "ts": "2026-03-10T00:00:00.000000+00:00"}).with_id()
         viejo = Event(**{**viejo.__dict__, "sig": keys.sign(old_priv, viejo.id)})
         assert s.verifier.problem(viejo) is None
@@ -460,7 +460,7 @@ def test_peers_shows_previous_keys(pair, capsys):
     access.authorize("laptop", pub, ssh=False, replace=True)
     assert cli.main(["peers"]) == 0
     out = capsys.readouterr().out
-    assert "anterior" in out and "hasta 2026-03-10T12:00:00" in out
+    assert "previous" in out and "until 2026-03-10T12:00:00" in out
 
 
 def wipe(node):
@@ -508,7 +508,7 @@ def test_restore_of_a_node_that_lost_its_data(pair):
         assert docs.check(s) == []
     # a second restore no longer applies
     res, _ = run_sync_restore(laptop, vps, old_keys=[huella])
-    assert isinstance(res, ProtocolError) and "ya tiene eventos propios" in str(res)
+    assert isinstance(res, ProtocolError) and "already has events of its own" in str(res)
 
 
 def test_without_restore_the_own_log_is_rejected(pair):
@@ -556,14 +556,14 @@ def test_cli_restore_and_rotate(pair, capsys):
     access.remote_add("vps", "ssh://cairn@host")
     access.remote_add("otro", "ssh://cairn@otro")
     assert cli.main(["sync", "--restore"]) == 1
-    assert "un solo remoto" in capsys.readouterr().err
+    assert "a single remote" in capsys.readouterr().err
     laptop.new("demo", "x")
     assert cli.main(["sync", "--restore", "vps"]) == 1
-    assert "ya tiene eventos propios" in capsys.readouterr().err
+    assert "already has events of its own" in capsys.readouterr().err
     before = laptop.pub
     assert cli.main(["key", "--rotate"]) == 0
     out = capsys.readouterr().out
-    assert "clave nueva de laptop" in out and "authorize laptop" in out
+    assert "new key of laptop" in out and "authorize laptop" in out
     assert cli.main(["key"]) == 0
     now = capsys.readouterr().out.strip()
     assert now != before and (laptop.root / "data" / "node_key.pub").read_text().strip() == now
@@ -597,7 +597,7 @@ def test_restore_stops_if_the_peer_sends_a_wrong_old_key(pair):
     vps.use()
     config.update(lambda raw: raw["peers"]["laptop"]["old"]["1"].update({"key": falsa}))
     res, _ = run_sync_restore(laptop, vps, old_keys=[huella])
-    assert isinstance(res, ProtocolError) and f"no tiene registrada la clave anterior {huella}" in str(res)
+    assert isinstance(res, ProtocolError) and f"has no record of the previous key {huella}" in str(res)
     _sin_restaurar(laptop)
     # without fingerprints, it reports which one the vps claims (the fake) and does not restore either
     res, _ = run_sync_restore(laptop, vps)
@@ -649,18 +649,18 @@ def test_cli_fingerprint_and_restore_options(pair, capsys):
     assert capsys.readouterr().out.strip() == keys.fingerprint(laptop.pub)
     access.remote_add("vps", "ssh://cairn@host")
     assert cli.main(["sync", "--old-key", keys.fingerprint(laptop.pub)]) == 1
-    assert "son para `sync --restore`" in capsys.readouterr().err
+    assert "are for `sync --restore`" in capsys.readouterr().err
     assert cli.main(["sync", "--restore", "vps", "--old-key", "SHA256:mal"]) == 1
-    assert "huella inválida" in capsys.readouterr().err
+    assert "invalid fingerprint" in capsys.readouterr().err
     assert cli.main(["key", "--rotate"]) == 0
     out = capsys.readouterr().out
     with laptop.store() as s:
-        assert f"huella nueva: {keys.fingerprint(s.public_line())}" in out
+        assert f"new fingerprint: {keys.fingerprint(s.public_line())}" in out
     vps.use()
     access.authorize("laptop", s.public_line(), ssh=False, replace=True)
     assert cli.main(["peers"]) == 0
     out = capsys.readouterr().out
-    assert keys.fingerprint(laptop.pub) in out and "anterior" in out
+    assert keys.fingerprint(laptop.pub) in out and "previous" in out
 
 
 # ──────────────────────────────────────────────────────────────── automatic trigger

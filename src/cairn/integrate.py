@@ -122,9 +122,9 @@ def _load_settings(path: Path) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8") or "{}")
     except ValueError as e:
-        raise CairnError(f"{path} no es JSON válido ({e}): no se tocó nada") from None
+        raise CairnError(f"{path} is not valid JSON ({e}): nothing was touched") from None
     if not isinstance(data, dict):
-        raise CairnError(f"{path} no es un objeto JSON: no se tocó nada")
+        raise CairnError(f"{path} is not a JSON object: nothing was touched")
     return data
 
 
@@ -167,13 +167,13 @@ def _apply_hooks(data: dict, command: list[str], install: bool, report: Report,
     """Leaves `data` with cairn's hooks installed (or without them). True if anything changed."""
     hooks = data.get("hooks")
     if hooks is not None and not isinstance(hooks, dict):
-        raise CairnError("settings.json: `hooks` no es un objeto: no se tocó nada")
+        raise CairnError("settings.json: `hooks` is not an object: nothing was touched")
     hooks = dict(hooks or {})
     changed = False
     for spec in specs:
         groups = hooks.get(spec.event) or []
         if not isinstance(groups, list):
-            raise CairnError(f"settings.json: `hooks.{spec.event}` no es una lista: no se tocó nada")
+            raise CairnError(f"settings.json: `hooks.{spec.event}` is not a list: nothing was touched")
         want = shlex.join([*command, *spec.args])
         current = [(str(h.get("command")), h.get("timeout")) for g in groups if isinstance(g, dict)
                    for h in (g.get("hooks") or []) if isinstance(h, dict)
@@ -185,13 +185,13 @@ def _apply_hooks(data: dict, command: list[str], install: bool, report: Report,
         groups, removed = _strip_hooks(groups, lambda c, spec=spec: _is_cairn_hook(c, spec))
         for r in removed:
             if not install or r != want:
-                report.actions.append(f"sacar hook {spec.event}: {r}")
+                report.actions.append(f"remove hook {spec.event}: {r}")
         if install:
             entry: dict = {"hooks": [{"type": "command", "command": want, "timeout": spec.timeout}]}
             if spec.matcher:
                 entry = {"matcher": spec.matcher, **entry}
             groups.append(entry)
-            report.actions.append(f"agregar {label}")
+            report.actions.append(f"add {label}")
         if groups:
             hooks[spec.event] = groups
         else:
@@ -221,7 +221,7 @@ def registered_mcp(name: str = MCP_NAME) -> dict | None:
 def _claude() -> str:
     found = shutil.which("claude")
     if not found:
-        raise CairnError("No se encontró el comando `claude` (Claude Code) en el PATH.")
+        raise CairnError("The `claude` command (Claude Code) was not found in the PATH.")
     return found
 
 
@@ -229,7 +229,7 @@ def _run_claude(*args: str) -> None:
     r = subprocess.run([_claude(), *args], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         msg = (r.stderr or r.stdout).strip()
-        raise CairnError(f"`claude {' '.join(args)}` falló ({r.returncode}): {msg}")
+        raise CairnError(f"`claude {' '.join(args)}` failed ({r.returncode}): {msg}")
 
 
 def _apply_mcp(command: list[str], install: bool, dry_run: bool, report: Report,
@@ -242,11 +242,11 @@ def _apply_mcp(command: list[str], install: bool, dry_run: bool, report: Report,
         report.unchanged.append(label)
         return
     if cur is not None:
-        report.actions.append(f"sacar MCP {name} (scope user)")
+        report.actions.append(f"remove MCP {name} (scope user)")
         if not dry_run:
             _run_claude("mcp", "remove", "--scope", "user", name)
     if install:
-        report.actions.append(f"agregar {label}")
+        report.actions.append(f"add {label}")
         if not dry_run:
             _run_claude("mcp", "add", "--scope", "user", name, "--", *command, "mcp")
 
@@ -286,13 +286,13 @@ def systemd_units(command: list[str], interval: int) -> dict[str, str]:
     return {
         f"{UNIT}.service": (
             "[Unit]\n"
-            "Description=cairn: sync con los remotos\n\n"
+            "Description=cairn: sync with the remotes\n\n"
             "[Service]\n"
             "Type=oneshot\n"
             f"ExecStart={shlex.join([*command, 'sync', '--quiet'])}\n"),
         f"{UNIT}.timer": (
             "[Unit]\n"
-            "Description=cairn: sync periódico (respaldo de los disparos de cada escritura)\n\n"
+            "Description=cairn: periodic sync (backup for the sync after each write)\n\n"
             "[Timer]\n"
             "OnBootSec=2min\n"
             f"OnUnitActiveSec={interval}min\n"
@@ -305,11 +305,11 @@ def systemd_units(command: list[str], interval: int) -> dict[str, str]:
 def _systemctl(*args: str) -> None:
     found = shutil.which("systemctl")
     if not found:
-        raise CairnError("No se encontró `systemctl`: el timer necesita systemd.")
+        raise CairnError("`systemctl` was not found: the timer needs systemd.")
     r = subprocess.run([found, "--user", *args], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         msg = (r.stderr or r.stdout).strip()
-        raise CairnError(f"`systemctl --user {' '.join(args)}` falló ({r.returncode}): {msg}")
+        raise CairnError(f"`systemctl --user {' '.join(args)}` failed ({r.returncode}): {msg}")
 
 
 def systemd(command: list[str] | None = None, interval: int = 15, remove: bool = False,
@@ -326,7 +326,7 @@ def systemd(command: list[str] | None = None, interval: int = 15, remove: bool =
         present = [n for n in systemd_units(command, interval) if (d / n).exists()]
         if not present:
             return report
-        report.actions.append(f"desactivar {UNIT}.timer y borrar {', '.join(present)}")
+        report.actions.append(f"disable {UNIT}.timer and delete {', '.join(present)}")
         if not dry_run:
             _systemctl("disable", "--now", f"{UNIT}.timer")
             for n in present:
@@ -341,12 +341,12 @@ def systemd(command: list[str] | None = None, interval: int = 15, remove: bool =
             report.unchanged.append(str(path))
             continue
         changed = True
-        report.actions.append(f"{'reescribir' if cur is not None else 'escribir'} {path}")
+        report.actions.append(f"{'rewrite' if cur is not None else 'write'} {path}")
         if not dry_run:
             d.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
     if changed:
-        report.actions.append(f"activar {UNIT}.timer (cada {interval} min)")
+        report.actions.append(f"enable {UNIT}.timer (every {interval} min)")
         if not dry_run:
             _systemctl("daemon-reload")
             _systemctl("enable", "--now", f"{UNIT}.timer")

@@ -78,7 +78,7 @@ def import_tree(store: Store, root: Path, dry_run: bool = False) -> ImportReport
     skipped, so running it twice duplicates nothing. Everything goes in in a single write."""
     root = root.expanduser()
     if not any((root / c).is_dir() for c in DOC_DIRS):
-        raise CairnError(f"{root} no tiene _wip/, _done/ ni _ref/")
+        raise CairnError(f"{root} has no _wip/, _done/ or _ref/")
     rep = ImportReport()
     entries: list[_Entry] = []
     seen: dict[str, str] = {}
@@ -95,15 +95,15 @@ def import_tree(store: Store, root: Path, dry_run: bool = False) -> ImportReport
                 continue
             name = p.stem
             if name in seen:
-                rep.skipped.append(f"{folder}/{p.name}: el nombre ya está en {seen[name]}/")
+                rep.skipped.append(f"{folder}/{p.name}: the name is already in {seen[name]}/")
                 continue
             if docs.name_taken(store, name):
-                rep.skipped.append(f"{folder}/{p.name}: ya está en la base")
+                rep.skipped.append(f"{folder}/{p.name}: already in the database")
                 continue
             meta, body = parse_front_matter(p.read_text(encoding="utf-8", errors="replace"))
             if meta is None:
-                rep.skipped.append(f"{folder}/{p.name}: sin front-matter (formato viejo de wip-doc: "
-                                   "correr `driver.py migrate` antes)")
+                rep.skipped.append(f"{folder}/{p.name}: no front-matter (old wip-doc format: run "
+                                   "`driver.py migrate` first)")
                 continue
             seen[name] = folder
             entries.append(_Entry(p, folder, name, meta, body, new_doc_id()))
@@ -136,8 +136,8 @@ def import_tree(store: Store, root: Path, dry_run: bool = False) -> ImportReport
         scope = DocState(e.name, meta, e.body).scope
         expected = DOC_DIRS[e.folder]
         if scope != expected:
-            rep.warnings.append(f"{e.folder}/{e.path.name}: estado '{meta.get('estado', '')}' no "
-                                f"corresponde a {e.folder}/ — queda en {scope}")
+            rep.warnings.append(f"{e.folder}/{e.path.name}: status '{meta.get('estado', '')}' does "
+                                f"not match {e.folder}/ — it goes to {scope}")
         payloads.append((e.doc_id, {"name": e.name, "meta": meta, "body": e.body, "links": links,
                                     "source": f"{e.folder}/{e.path.name}", "updated": _mtime(e.path)}))
         rep.imported.append(f"{e.folder}/{e.path.name}")
@@ -146,7 +146,7 @@ def import_tree(store: Store, root: Path, dry_run: bool = False) -> ImportReport
     with store.writer() as w:
         for doc_id, payload in payloads:
             if docs.name_taken(store, payload["name"]):     # created in the meantime
-                raise CairnError(f"{payload['name']} apareció en la base durante el import: reintentar")
+                raise CairnError(f"{payload['name']} appeared in the database during the import: try again")
             w.emit("import", doc_id, payload)
     return rep
 
@@ -174,8 +174,8 @@ def export_tree(store: Store, root: Path, scopes: tuple[str, ...] = docs.SCOPES,
         different = [str(dest) for _, dest, text in plan
                      if dest.exists() and dest.read_text(encoding="utf-8", errors="replace") != text]
         if different:
-            raise CairnError(f"{len(different)} archivo(s) ya existen con otro contenido (--force para "
-                             "pisarlos):\n" + "\n".join(f"  {d}" for d in different[:10]))
+            raise CairnError(f"{len(different)} file(s) already exist with other content (--force to "
+                             "overwrite them):\n" + "\n".join(f"  {d}" for d in different[:10]))
     rep = ExportReport()
     for doc, dest, text in plan:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -231,15 +231,15 @@ def leftovers(store: Store, root: Path | None = None) -> list[str]:
             if not p.is_file() or p.name.lower() == "readme.md":
                 continue
             if docs.name_taken(store, p.stem):
-                out.append(f"{c}/{p.name}: el doc ya está en cairn y el archivo quedó de wip-doc "
-                           "(borrarlo; `cairn show` lo reproduce)")
+                out.append(f"{c}/{p.name}: the doc is already in cairn and the file is a wip-doc "
+                           "leftover (delete it; `cairn show` reproduces it)")
             else:
-                out.append(f"{c}/{p.name}: un doc fuera de cairn — `cairn migrate wip-doc import "
-                           f"{root}` lo suma")
+                out.append(f"{c}/{p.name}: a doc outside cairn — `cairn migrate wip-doc import "
+                           f"{root}` adds it")
     for d in doc_dirs_in_repos(root, frozenset(cfg.prune), cfg.max_depth):
         n = sum(1 for x in d.rglob("*.md") if x.name.lower() != "readme.md")
-        out.append(f"{d.relative_to(root)}/ tiene {n} .md adentro de un repo — si son docs, "
-                   f"`cairn migrate wip-doc import {d.parent}`; si no, van en {root.name}/{d.name}/")
+        out.append(f"{d.relative_to(root)}/ has {n} .md file(s) inside a repo — if they are docs, "
+                   f"`cairn migrate wip-doc import {d.parent}`; if not, they go in {root.name}/{d.name}/")
     return out
 
 
@@ -265,7 +265,7 @@ def unhook(dry_run: bool = False) -> integrate.Report:
     if not isinstance(hooks, dict) or not isinstance(hooks.get("SessionStart"), list):
         return report
     groups, removed = integrate._strip_hooks(hooks["SessionStart"], is_hook)
-    report.actions += [f"sacar hook SessionStart de wip-doc: {r}" for r in removed]
+    report.actions += [f"remove wip-doc's SessionStart hook: {r}" for r in removed]
     if not removed:
         return report
     hooks = dict(hooks)

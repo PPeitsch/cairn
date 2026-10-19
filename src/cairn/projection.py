@@ -123,7 +123,7 @@ def fold(state: DocState | None, ev: Event) -> DocState:
                        links=[list(x) for x in p.get("links") or []])
         return new
     if state is None:
-        raise ValueError(f"{ev.op} sobre un doc que no existe")
+        raise ValueError(f"{ev.op} on a doc that does not exist")
     new = deepcopy(state)
     if "name" in p:
         new.name = p["name"]

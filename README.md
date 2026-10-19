@@ -8,9 +8,9 @@ over ssh, git style, and agents access it through MCP stdio.
 > Code integration, ssh sync with signed events, and the migration from wip-doc. Still to do, if
 > needed: an HTTPS transport for cloud nodes without outbound ssh.
 
-> The CLI output, the MCP tool descriptions and the doc templates are still in Spanish, and so
-> are the front-matter field names (`tipo`, `estado`, `nota`, …). Moving them to English is
-> under way.
+> The front-matter field names and values (`tipo`, `estado: en_progreso`, `nota`, …) and some
+> command flags (`--descartar`, `--seccion`, …) are still in Spanish. Moving them to English,
+> with the Spanish ones still read, is under way.
 
 ## How it works
 
@@ -44,7 +44,7 @@ changes the event format, so two nodes can have different configs.
 |---|---|---|---|
 | `[docs]` | `projects` | `~/projects` | projects root (each doc's `repo:` comes from here) |
 | | `author` | `git config user.name`, or the user | author of new docs |
-| | `templates` | (the built-in ones) | folder with `bug.md`, `infra.md`, `plan.md`, `ref.md`, `ref_header.md`, `handoff.md`; `{titulo}` is replaced |
+| | `templates` | (the built-in ones) | folder with `bug.md`, `infra.md`, `plan.md`, `ref.md`, `ref_header.md`, `handoff.md`; `{title}` is replaced |
 | | `handoff_stale_days` | `14` | after how many days a pending handoff is flagged as old |
 | | `file_dirs` | (none) | subfolders of `<projects>/_wip`, `_done` and `_ref` with files that are not docs (e.g. `scripts, validations`); see below |
 | | `prune`, `max_depth` | `node_modules, .git, …`, `4` | what not to walk in those folders, and when looking for wip-doc folders inside repos |
@@ -58,9 +58,9 @@ changes the event format, so two nodes can have different configs.
 | `[claude_code]` | `mcp_name` | `cairn` | name `integrate` registers the MCP server under |
 | | `start_timeout`, `end_timeout` | `30`, `10` | timeout of the `SessionStart` and `SessionEnd` hooks |
 
-`cairn defaults <folder>` exports the built-in templates and instructions as a starting point,
-and shows what to put in the config. A config that does not load is not saved: `cairn` goes back
-to the previous one.
+`cairn defaults <folder>` exports the built-in templates and instructions as a starting point (to
+write them in another language, for instance), and shows what to put in the config. A config that
+does not load is not saved: `cairn` goes back to the previous one.
 
 ## Installation
 

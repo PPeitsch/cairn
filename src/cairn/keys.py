@@ -49,9 +49,9 @@ def load_private(path: Path) -> Ed25519PrivateKey:
     try:
         key = serialization.load_ssh_private_key(path.read_bytes(), password=None)
     except (OSError, ValueError, TypeError) as e:
-        raise KeyFileError(f"{path}: no se pudo leer la clave del nodo ({e})") from None
+        raise KeyFileError(f"{path}: could not read the node key ({e})") from None
     if not isinstance(key, Ed25519PrivateKey):
-        raise KeyFileError(f"{path}: la clave del nodo no es ed25519")
+        raise KeyFileError(f"{path}: the node key is not ed25519")
     return key
 
 
@@ -64,13 +64,13 @@ def parse_public(line: str) -> Ed25519PublicKey:
     """A public key in `ssh-ed25519 AAAA… [comment]` format."""
     parts = line.strip().split()
     if len(parts) < 2 or parts[0] != "ssh-ed25519":
-        raise KeyFileError("se espera una clave pública `ssh-ed25519 AAAA…`")
+        raise KeyFileError("expected a public key `ssh-ed25519 AAAA…`")
     try:
         key = serialization.load_ssh_public_key(f"{parts[0]} {parts[1]}".encode("ascii"))
     except (ValueError, UnicodeEncodeError) as e:
-        raise KeyFileError(f"clave pública inválida: {e}") from None
+        raise KeyFileError(f"invalid public key: {e}") from None
     if not isinstance(key, Ed25519PublicKey):
-        raise KeyFileError("la clave pública no es ed25519")
+        raise KeyFileError("the public key is not ed25519")
     return key
 
 
@@ -97,7 +97,7 @@ def as_fingerprint(value: str) -> str:
         except ValueError:
             ok = False
         if not ok:
-            raise KeyFileError(f"huella inválida: {value} (se espera `SHA256:` y 43 caracteres)")
+            raise KeyFileError(f"invalid fingerprint: {value} (expected `SHA256:` and 43 characters)")
         return value
     return fingerprint(value)
 
