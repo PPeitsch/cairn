@@ -121,6 +121,7 @@ h1, h2, h3 { letter-spacing: -.015em; }
 .item .meta { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px;
   color: var(--muted); align-items: center; }
 .item .meta .mono { font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
+.item code { overflow-wrap: anywhere; }
 .item .sum { grid-column: 2 / 4; font-size: 13.5px; color: var(--fg-soft); line-height: 1.5; }
 .item .right { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
 .flat .item { padding-left: 4px; padding-right: 4px; }
@@ -146,16 +147,31 @@ aside .item .meta .mono { display: none; }
 .s-discarded, .s-dropped, .s-archived { background: var(--gray-soft); color: var(--gray); }
 .s-reference { background: var(--teal-soft); color: var(--teal); }
 .stale { color: var(--amber); }
-.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 11px; border-radius: 999px;
-  border: 1px solid var(--line); color: var(--fg-soft); font-size: 13px; background: var(--surface); }
-.chip:hover { border-color: var(--line-strong); text-decoration: none; }
-.chip.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
-.chip .count { color: var(--faint); font-size: 12px; }
-.chip.on .count { color: color-mix(in srgb, var(--bg) 70%, transparent); }
-.filters { display: flex; flex-direction: column; gap: 8px; margin: 0 0 20px; }
-.filters .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.filters .lbl { width: 44px; font-size: 12px; color: var(--muted); text-transform: uppercase;
-  letter-spacing: .06em; }
+/* ── the filter bar */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 18px; }
+.seg-lg { background: var(--panel); border-color: var(--line); padding: 2px; border-radius: 9px; }
+.seg-lg a { padding: 4px 12px; border-radius: 7px; font-size: 13.5px; }
+.seg-lg a.on { background: var(--surface); box-shadow: var(--shadow); }
+.filter-form { display: contents; }
+.select { position: relative; display: inline-flex; }
+.select select { appearance: none; -webkit-appearance: none; font: 13.5px var(--sans); color: var(--fg-soft);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 5px 30px 5px 11px;
+  cursor: pointer; max-width: 220px; text-overflow: ellipsis; }
+.select select:hover { border-color: var(--line-strong); }
+.select select:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.select::after { content: ""; position: absolute; right: 12px; top: 50%; width: 6px; height: 6px;
+  border: solid var(--muted); border-width: 0 1.5px 1.5px 0; transform: translateY(-70%) rotate(45deg);
+  pointer-events: none; }
+.select.on select { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--fg); }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); font-size: 12.5px; font-weight: 550; }
+.pill span { font-size: 14px; line-height: 1; opacity: .7; }
+.pill:hover { text-decoration: none; }
+.pill:hover span { opacity: 1; }
+.toolbar-count { margin-left: auto; color: var(--muted); font-size: 13px; }
+.btn { font: 13px var(--sans); padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--fg); cursor: pointer; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* ── progress */
 .prog { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
@@ -191,6 +207,9 @@ aside .item .meta .mono { display: none; }
   color: var(--fg-soft); background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
   padding: 1px 4px 1px 8px; cursor: pointer; }
 .copyable:hover { border-color: var(--line-strong); }
+.copyable { max-width: 100%; }
+.copyable span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-head .facts > span { max-width: 100%; }
 .copyable svg { width: 13px; height: 13px; color: var(--faint); }
 .copyable.ok svg { color: var(--green); }
 .doc-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 28px; align-items: start; }

@@ -25,6 +25,10 @@
     else if (e.key === "Escape" && typing) document.activeElement.blur();
   });
 
+  // ── filter menus apply on change
+  document.querySelectorAll(".filter-form select").forEach((s) =>
+    s.addEventListener("change", () => s.form.submit()));
+
   // ── copy: code blocks and [data-copy]
   const copy = async (text, el) => {
     try { await navigator.clipboard.writeText(text); } catch { return; }
