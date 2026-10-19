@@ -369,6 +369,45 @@ mark { background: color-mix(in srgb, var(--amber) 28%, transparent); color: inh
 .toast.show { opacity: 1; transform: translateX(-50%); pointer-events: auto; }
 .toast a { color: var(--bg); font-weight: 650; text-decoration: underline; }
 
+/* ── the doc's group of links (an SVG drawn by the server) */
+.lgraph-card { margin-bottom: 18px; overflow: hidden; }
+.lgraph-scroll { overflow-x: auto; padding: 12px 12px 4px; }
+.lgraph { display: block; font: 12px var(--sans); }
+.lgraph .lg-lane { fill: var(--panel); opacity: .55; }
+.lgraph .lg-lane-t { fill: var(--faint); font: 600 10.5px var(--mono); text-transform: uppercase;
+  letter-spacing: .05em; }
+.lgraph .lg-sep { stroke: var(--line-strong); stroke-dasharray: 2 4; }
+.lgraph .lg-date { fill: var(--muted); font-size: 11px; }
+.lgraph .lg-edge { fill: none; stroke-width: 1.6; }
+.lgraph .lg-node rect { fill: var(--surface); stroke: var(--line-strong); }
+.lgraph .lg-node text { fill: var(--fg); }
+.lgraph a:hover .lg-node rect:first-of-type { stroke: var(--accent); }
+.lgraph a:hover { text-decoration: none; }
+.lgraph .lg-node.closed rect:first-of-type { fill: var(--sunken); }
+.lgraph .lg-node.closed text { fill: var(--muted); }
+.lgraph .lg-node.here rect:first-of-type { stroke: var(--accent); stroke-width: 2; }
+.lgraph .lg-node.here text { font-weight: 650; }
+.lgraph .lg-node .lg-bar { stroke: none; }
+.lgraph .t-plan .lg-bar { fill: var(--accent); }
+.lgraph .t-bug .lg-bar { fill: var(--red); }
+.lgraph .t-infra .lg-bar { fill: var(--gray); }
+.lgraph .t-handoff .lg-bar { fill: var(--amber); }
+.lgraph .t-ref .lg-bar { fill: var(--teal); }
+.lg-edge.k-plan { stroke: var(--amber); }
+.lg-edge.k-origin { stroke: var(--violet); stroke-dasharray: 5 3; }
+.lg-edge.k-references { stroke: var(--teal); }
+.lg-head.k-plan { fill: var(--amber); }
+.lg-head.k-origin { fill: var(--violet); }
+.lg-head.k-references { fill: var(--teal); }
+.lgraph-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 4px 16px 12px; font-size: 12.5px;
+  color: var(--fg-soft); align-items: center; }
+.lgraph-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.lgraph-legend i { display: inline-block; width: 22px; border-top: 2px solid; }
+.lgraph-legend i.k-plan { border-color: var(--amber); }
+.lgraph-legend i.k-origin { border-color: var(--violet); border-top-style: dashed; }
+.lgraph-legend i.k-references { border-color: var(--teal); }
+.lgraph-legend .muted { margin-left: auto; font-size: 12px; }
+
 @media (max-width: 1080px) {
   .grid-2, .doc-grid { grid-template-columns: minmax(0, 1fr); }
   aside.side { position: static; max-height: none; }

@@ -29,6 +29,14 @@
   document.querySelectorAll(".filter-form select").forEach((s) =>
     s.addEventListener("change", () => s.form.submit()));
 
+  // ── the group of links: if it does not fit, start scrolled to this doc
+  document.querySelectorAll(".lgraph-scroll").forEach((box) => {
+    const here = box.querySelector(".lg-node.here rect");
+    if (!here || box.scrollWidth <= box.clientWidth) return;
+    const x = here.getBBox().x + here.getBBox().width / 2;
+    box.scrollLeft = Math.max(0, x - box.clientWidth / 2);
+  });
+
   // ── copy: code blocks and [data-copy]
   const copy = async (text, el) => {
     try { await navigator.clipboard.writeText(text); } catch { return; }

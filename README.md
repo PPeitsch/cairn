@@ -201,7 +201,8 @@ cairn serve [--port N] [--open]             # read-only web view on 127.0.0.1 (d
 - **Lists** of open, closed and reference docs, filtered by scope, type and repo.
 - **A doc**: its status and facts, the doc itself, an outline that follows the scroll, its links
   both ways, its checklist progress, and the `cairn show` / `cairn edit` commands to copy. The
-  names of other docs become links.
+  names of other docs become links. If it has links, a diagram of its group (a plan with its
+  handoffs and the reference that came out of it), in date order with a lane per type.
 - **History** of a doc as a timeline with the diff of each revision; **Activity** for every
   change on the node, by day; **Weekly**; full-text **search** (`/` focuses it).
 
