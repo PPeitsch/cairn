@@ -455,6 +455,13 @@ def cmd_defaults(args) -> int:
     return 0
 
 
+def cmd_serve(args) -> int:
+    config.load()       # without `init`, say so here and not on the first request
+    from cairn import web
+    web.serve(args.port, args.open)
+    return 0
+
+
 def cmd_mcp(args) -> int:
     config.load()       # without `init`, say so here and not on the first tool call
     from cairn import mcp_server  # only this command loads `mcp`
@@ -703,6 +710,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("folder")
     p.add_argument("-f", "--force", action="store_true", help="overwrite files that already exist")
     p.set_defaults(func=cmd_defaults)
+
+    p = sub.add_parser("serve", help="local read-only web view of the docs (127.0.0.1)")
+    p.add_argument("--port", type=int, default=8737, help="default: 8737")
+    p.add_argument("--open", action="store_true", help="open it in the browser")
+    p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("mcp", help="stdio MCP server (the agent launches it, it is not run by hand)")
     p.set_defaults(func=cmd_mcp)
