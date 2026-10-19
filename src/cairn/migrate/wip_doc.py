@@ -10,8 +10,10 @@ and a `SessionStart` hook announced the handoffs. The steps, each one its own co
 
 - `import` reads the tree into cairn and `export` writes cairn's docs back as that tree. They
   are inverses: exporting what was imported reproduces the files (front-matter + body), with
-  links as relative paths. Only the `.md` files at the top of each folder are read; `scripts/`,
-  `validations/` and the rest are not docs.
+  links as relative paths. wip-doc wrote the front-matter in Spanish (`tipo`, `estado`…):
+  `import` saves it in cairn's vocabulary and `export` writes it that way. Only the `.md`
+  files at the top of each folder are read; `scripts/`, `validations/` and the rest are not
+  docs.
 - `check` reports what is left over after importing: files already in cairn, `.md` files that
   were not imported, and `_wip/` folders inside repos (the location used before the single tree).
 - `unhook` removes wip-doc's handoffs hook from Claude Code's settings: with both active, every
@@ -26,8 +28,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cairn import docs, integrate
-from cairn.docs import LINK_KINDS, TIPOS_DOC
+from cairn import docs, integrate, vocab
+from cairn.docs import DOC_TYPES, LINK_KINDS
 from cairn.markdown import parse_front_matter
 from cairn.projection import DocState
 from cairn.store import CairnError, Store, new_doc_id
@@ -111,11 +113,11 @@ def import_tree(store: Store, root: Path, dry_run: bool = False) -> ImportReport
     ids = {e.name: e.doc_id for e in entries}
     payloads = []
     for e in entries:
-        meta = dict(e.meta)
-        if meta.get("tipo") not in TIPOS_DOC:
-            tipo = _inferred_type(e.folder, e.name)
-            rep.warnings.append(f"{e.folder}/{e.path.name}: tipo '{meta.get('tipo', '')}' → {tipo}")
-            meta["tipo"] = tipo
+        meta = vocab.meta(e.meta)
+        if meta.get("type") not in DOC_TYPES:
+            type_ = _inferred_type(e.folder, e.name)
+            rep.warnings.append(f"{e.folder}/{e.path.name}: type '{meta.get('type', '')}' → {type_}")
+            meta["type"] = type_
         links: list[list[str]] = []
         for kind in LINK_KINDS:
             raw = _as_list(meta.pop(kind, None))
@@ -136,7 +138,7 @@ def import_tree(store: Store, root: Path, dry_run: bool = False) -> ImportReport
         scope = DocState(e.name, meta, e.body).scope
         expected = DOC_DIRS[e.folder]
         if scope != expected:
-            rep.warnings.append(f"{e.folder}/{e.path.name}: status '{meta.get('estado', '')}' does "
+            rep.warnings.append(f"{e.folder}/{e.path.name}: status '{meta.get('status', '')}' does "
                                 f"not match {e.folder}/ — it goes to {scope}")
         payloads.append((e.doc_id, {"name": e.name, "meta": meta, "body": e.body, "links": links,
                                     "source": f"{e.folder}/{e.path.name}", "updated": _mtime(e.path)}))
@@ -185,7 +187,7 @@ def export_tree(store: Store, root: Path, scopes: tuple[str, ...] = docs.SCOPES,
             dest.write_text(text, encoding="utf-8")
             rep.written.append(doc.path)
         try:
-            t = datetime.fromisoformat(doc.updated).timestamp()
+            t = datetime.fromisoformat(doc.last_event).timestamp()
             os.utime(dest, (t, t))
         except ValueError:
             pass

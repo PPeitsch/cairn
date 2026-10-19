@@ -47,9 +47,9 @@ class Node:
         self.use()
         access.authorize(other.name, other.pub, ssh=ssh, command=["/opt/cairn"])
 
-    def new(self, area, tema, tipo="plan"):
+    def new(self, area, topic, type_="plan"):
         with self.store() as s:
-            return docs.new(s, area, tema, tipo, "demo").doc
+            return docs.new(s, area, topic, type_, "demo").doc
 
     def names(self) -> set[str]:
         with self.store() as s:
@@ -128,6 +128,30 @@ def test_the_chain_continues_across_nodes(pair):
     with laptop.store() as s:
         assert docs.check(s) == []
         assert not docs.find(s, doc.name).divergent
+
+
+def test_old_vocabulary_events_and_new_ones_across_nodes(pair):
+    """The vps still has events as the Spanish-vocabulary version wrote them; the laptop keeps
+    going in English on top. Both end up with the same doc."""
+    laptop, vps = pair
+    from cairn.store import new_doc_id
+    doc_id = new_doc_id()
+    with vps.store() as s, s.writer() as w:
+        w.emit("create", doc_id, {"name": "2026-03-01_demo_viejo", "body": "# viejo\n", "meta": {
+            "tipo": "plan", "estado": "en_progreso", "fecha": "2026-03-01", "nota": "de antes"}})
+    run_sync(laptop, vps)
+    with laptop.store() as s:
+        docs.close(s, "2026-03-01_demo_viejo", force=True)
+    run_sync(laptop, vps)
+    states = []
+    for node in (laptop, vps):
+        with node.store() as s:
+            d = docs.find(s, "2026-03-01_demo_viejo")
+            states.append((d.scope, d.meta, d.head))
+            assert docs.check(s) == []
+    assert states[0] == states[1]
+    assert states[0][0] == "done" and states[0][1] == {
+        "type": "plan", "status": "completed", "date": "2026-03-01", "closed": "2026-03-10"}
 
 
 def test_divergence_between_nodes_is_the_same_on_both(pair):
@@ -336,7 +360,7 @@ def _divergir(laptop, vps):
     doc = laptop.new("demo", "plan")
     run_sync(laptop, vps)
     with laptop.store() as s:
-        edit.apply(s, doc.name, body="# laptop\n", set_={"nota": "de laptop"})
+        edit.apply(s, doc.name, body="# laptop\n", set_={"note": "de laptop"})
     with vps.store() as s:
         vps.mp.setenv("CAIRN_NOW", "2026-03-10T13:00:00+00:00")
         edit.apply(s, doc.name, body="# vps 1\n")
@@ -363,7 +387,7 @@ def test_resolve_keep_the_branch(pair, capsys):
     for n in (laptop, vps):
         with n.store() as s:
             d = docs.find(s, name)
-            assert not d.divergent and d.body == "# vps 2\n" and "nota" not in d.meta
+            assert not d.divergent and d.body == "# vps 2\n" and "note" not in d.meta
             assert docs.check(s) == []
 
 

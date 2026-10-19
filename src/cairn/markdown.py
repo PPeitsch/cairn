@@ -10,8 +10,8 @@ import json
 import re
 
 # field order when writing the front-matter; fields not listed here go last
-FM_ORDER = ["tipo", "repo", "para", "estado", "nota", "fecha", "cerrado", "usada", "descartada",
-            "reabierto", "actualizado", "autor", "plan", "origen", "referencias"]
+FM_ORDER = ["type", "repo", "to", "status", "note", "date", "closed", "taken", "dropped",
+            "reopened", "updated", "author", "plan", "origin", "references"]
 # no `#` (starts a YAML comment) and no `:`; anything that does not match is written quoted
 _PLAIN = re.compile(r"^[\w./()+áéíóúñÁÉÍÓÚÑ -]*$")
 MONTHS = ["x", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]

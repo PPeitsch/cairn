@@ -62,11 +62,11 @@ def line_range(text: str, spec: str) -> str:
     lines = text.splitlines()
     m = re.fullmatch(r"\s*(\d+)\s*(?:(-)\s*(\d+)?)?\s*", spec)
     if not m:
-        raise CairnError(f"lineas: expected `A-B`, `A-` or `A` (e.g. `40-80`), not {spec!r}")
+        raise CairnError(f"lines: expected `A-B`, `A-` or `A` (e.g. `40-80`), not {spec!r}")
     a = int(m.group(1))
     b = int(m.group(3)) if m.group(3) else (len(lines) if m.group(2) else a)
     if a < 1 or b < a or a > len(lines):
-        raise CairnError(f"lineas {spec}: the doc has {len(lines)} line(s)")
+        raise CairnError(f"lines {spec}: the doc has {len(lines)} line(s)")
     b = min(b, len(lines))
     return f"(lines {a}-{b} of {len(lines)})\n" + _numbered(lines[a - 1:b], a)
 
@@ -99,15 +99,15 @@ def outline(text: str, max_chars: int) -> str:
                 "this is the outline, not the doc]", "Sections:"]
     out += [f"{'  ' * (s.level - 1)}{'#' * s.level} {s.title}  (lines {s.start}-{s.end}, "
             f"{s.chars} characters)" for s in every if s.level > 1]
-    out += ["", "Ask for what is needed: `seccion=\"<title>\"`, `lineas=\"A-B\"` (cairn_search's "
-                "numbers work), or `completo=true` for the whole doc."]
+    out += ["", "Ask for what is needed: `section=\"<title>\"`, `lines=\"A-B\"` (cairn_search's "
+                "numbers work), or `full=true` for the whole doc."]
     return "\n".join(out)
 
 
 def view(text: str, section: str | None = None, lines: str | None = None,
          full: bool = False, max_chars: int = 8000) -> str:
     if section and lines:
-        raise CairnError("seccion or lineas, not both")
+        raise CairnError("section or lines, not both")
     if lines:
         return line_range(text, lines)
     if section:

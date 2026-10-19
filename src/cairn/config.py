@@ -91,13 +91,13 @@ def default_author() -> str:
     try:
         return getpass.getuser()
     except (OSError, KeyError):
-        return "autor"
+        return "author"
 
 
 def default_node_name() -> str:
     """The hostname, turned into a valid node name."""
     name = re.sub(r"[^a-z0-9_-]+", "-", socket.gethostname().split(".")[0].lower()).strip("-_")
-    return name if NODE_RE.match(name) else "nodo"
+    return name if NODE_RE.match(name) else "node"
 
 
 @dataclass(frozen=True)

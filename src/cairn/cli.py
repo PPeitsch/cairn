@@ -87,22 +87,22 @@ def cmd_rebuild(args) -> int:
 def cmd_new(args) -> int:
     with _open() as store:
         repo = args.repo if args.repo is not None else _cwd_repo(store)
-        r = docs.new(store, args.area, args.tema, args.tipo, repo)
+        r = docs.new(store, args.area, args.topic, args.type, repo)
     print(r.doc.name)
     return 0
 
 
 def cmd_close(args) -> int:
     with _open() as store:
-        r = docs.close(store, args.doc, force=args.force, descartar=args.descartar)
-    print(f"Closed: {r.doc.name} ({r.doc.estado})")
+        r = docs.close(store, args.doc, force=args.force, discard=args.discard)
+    print(f"Closed: {r.doc.name} ({r.doc.status})")
     _warn_all(r.warnings)
     return 0
 
 
 def cmd_reopen(args) -> int:
     with _open() as store:
-        r = docs.reopen(store, args.doc, args.motivo)
+        r = docs.reopen(store, args.doc, args.reason)
     print(f"Reopened: {r.doc.name}")
     _warn_all(r.warnings)
     return 0
@@ -110,7 +110,7 @@ def cmd_reopen(args) -> int:
 
 def cmd_promote(args) -> int:
     with _open() as store:
-        r = docs.promote(store, args.doc, args.area, args.tema, args.seccion, force=args.force)
+        r = docs.promote(store, args.doc, args.area, args.topic, args.section, force=args.force)
     print(r.doc.name)
     print(f"  carried over: {', '.join(r.extra['carried'])}")
     _warn_all(r.warnings)
@@ -123,7 +123,7 @@ def _print_scope(store: Store, scope: str, by_repo: bool = False) -> None:
     """In `wip`, handoffs are listed apart: they are not open work but notes waiting for the next
     conversation."""
     found = docs.all_docs(store, (scope,))
-    handoffs = [d for d in found if scope == "wip" and d.tipo == "handoff"]
+    handoffs = [d for d in found if scope == "wip" and d.type == "handoff"]
     work = [d for d in found if d not in handoffs]
     if by_repo:
         if work:
@@ -142,9 +142,9 @@ def cmd_list(args) -> int:
         if args.scope == "all":
             for s in docs.SCOPES:
                 print(f"=== {s} ===")
-                _print_scope(store, s, args.por_repo)
+                _print_scope(store, s, args.by_repo)
         else:
-            _print_scope(store, args.scope, args.por_repo)
+            _print_scope(store, args.scope, args.by_repo)
     return 0
 
 
@@ -156,25 +156,25 @@ def _summary(doc: docs.Doc) -> str:
 def cmd_search(args) -> int:
     with _open() as store:
         if args.fts:
-            found, total = docs.search_fts(store, args.patron, _scopes(args.scope))
+            found, total = docs.search_fts(store, args.pattern, _scopes(args.scope))
             if not found:
-                print(f"FTS search \"{args.patron}\": no matches")
+                print(f"FTS search \"{args.pattern}\": no matches")
                 return 0
-            print(docs.fts_header(args.patron, found, total) + "\n")
+            print(docs.fts_header(args.pattern, found, total) + "\n")
             for h in found:
                 d = h.doc
-                print(f"  {docs.ICON[d.tipo]}  {d.title}   ·   {docs.estado_label(d)}   ·   "
+                print(f"  {docs.ICON[d.type]}  {d.title}   ·   {docs.status_label(d)}   ·   "
                       f"{docs.repo_label(d)}")
                 print(f"      {d.path}")
                 print(f"      {h.snippet}")
                 print()
             return 0
-        hits, total = docs.search(store, args.patron, _scopes(args.scope))
-        files = tree.search_files(store, args.patron, _scopes(args.scope))
+        hits, total = docs.search(store, args.pattern, _scopes(args.scope))
+        files = tree.search_files(store, args.pattern, _scopes(args.scope))
     if not hits and not files:
-        print(f"Search \"{args.patron}\": no matches in {total} docs")
+        print(f"Search \"{args.pattern}\": no matches in {total} docs")
         return 0
-    print(f"Search \"{args.patron}\": {len(hits)} doc(s) of {total}")
+    print(f"Search \"{args.pattern}\": {len(hits)} doc(s) of {total}")
     current = None
     for h in hits:
         repo = docs.repo_label(h.doc)
@@ -183,7 +183,7 @@ def cmd_search(args) -> int:
             print(f"\n━━━━━  {repo}  ({n})  ━━━━━\n")
             current = repo
         d = h.doc
-        print(f"  {docs.ICON[d.tipo]}  {d.title}   ·   {docs.estado_label(d)}   ·   "
+        print(f"  {docs.ICON[d.type]}  {d.title}   ·   {docs.status_label(d)}   ·   "
               f"{len(h.lines)} match(es)")
         print(f"      {d.path}")
         if r := _summary(d):
@@ -203,22 +203,22 @@ def cmd_search(args) -> int:
 
 def cmd_weekly(args) -> int:
     with _open() as store:
-        since, closed = docs.weekly(store, args.dias)
+        since, closed = docs.weekly(store, args.days)
     today = clock.today()
     total = len(closed)
-    if args.formato == "full":
-        print(f"## Weekly — docs closed between {since} and {today} (last {args.dias} days)\n")
+    if args.format == "full":
+        print(f"## Weekly — docs closed between {since} and {today} (last {args.days} days)\n")
         print(f"_{total} doc(s) closed_\n")
         for d in closed:
-            kind = {"plan": "plan/spec", "bug": "bug"}.get(d.tipo, "diagnosis")
-            print(f"### {d.title}\n_{kind} · {d.meta.get('estado', '—')} · closed {d.date_closed()} · "
+            kind = {"plan": "plan/spec", "bug": "bug"}.get(d.type, "diagnosis")
+            print(f"### {d.title}\n_{kind} · {d.meta.get('status', '—')} · closed {d.date_closed()} · "
                   f"{docs.repo_label(d)}_\n")
             print(f"{d.tldr or '_(no TL;DR)_'}\n\n---\n")
         return 0
-    counts = {k: sum(1 for d in closed if d.tipo == k) for k in ("bug", "infra", "plan")}
+    counts = {k: sum(1 for d in closed if d.type == k) for k in ("bug", "infra", "plan")}
     parts = [f"{docs.ICON[k]} {n} {lbl}" for k, lbl in (("bug", "bugs"), ("infra", "diagnoses"),
                                                         ("plan", "plans")) if (n := counts[k])]
-    discarded = sum(1 for d in closed if d.estado == "descartado")
+    discarded = sum(1 for d in closed if d.status == "discarded")
     print(f"Week {fmt_date(since)} – {fmt_date(today)} {today[:4]}  ·  {total} pieces of work closed"
           + (f" ({discarded} discarded)" if discarded else ""))
     if parts:
@@ -230,8 +230,8 @@ def cmd_weekly(args) -> int:
             n = sum(1 for x in closed if docs.repo_label(x) == repo)
             print(f"\n━━━━━  {repo}  ({n})  ━━━━━\n")
             current = repo
-        mark = "   ·   discarded" if d.estado == "descartado" else ""
-        print(f"  {docs.ICON[d.tipo]}  {d.title}   ·   {fmt_date(d.date_closed())}{mark}")
+        mark = "   ·   discarded" if d.status == "discarded" else ""
+        print(f"  {docs.ICON[d.type]}  {d.title}   ·   {fmt_date(d.date_closed())}{mark}")
         print(f"      {first_sentences(d.tldr, 2) or '(no TL;DR)'}\n")
     return 0
 
@@ -251,7 +251,7 @@ def cmd_check(args) -> int:
 def cmd_handoff_new(args) -> int:
     with _open() as store:
         repo = args.repo if args.repo is not None else _cwd_repo(store)
-        r = docs.handoff_new(store, args.area, args.tema, args.para, args.plan, repo)
+        r = docs.handoff_new(store, args.area, args.topic, args.to, args.plan, repo)
     print(r.doc.name)
     _warn_all(r.warnings)
     return 0
@@ -259,8 +259,8 @@ def cmd_handoff_new(args) -> int:
 
 def cmd_handoff_take(args) -> int:
     with _open() as store:
-        r = docs.handoff_take(store, args.nota, _cwd_repo(store))
-    print(f"Handoff taken: {r.doc.name} (archived, status: usada)")
+        r = docs.handoff_take(store, args.note, _cwd_repo(store))
+    print(f"Handoff taken: {r.doc.name} (archived, status: taken)")
     for a in r.warnings:
         print(f"[warning] {a}")
     print("\n" + "=" * 72 + r.doc.body.rstrip("\n") + "\n" + "=" * 72)
@@ -269,7 +269,7 @@ def cmd_handoff_take(args) -> int:
 
 def cmd_handoff_drop(args) -> int:
     with _open() as store:
-        r = docs.handoff_drop(store, args.nota, args.motivo)
+        r = docs.handoff_drop(store, args.note, args.reason)
     print(f"Handoff discarded: {r.doc.name} (archived)")
     return 0
 
@@ -335,8 +335,8 @@ def cmd_edit(args) -> int:
 def cmd_show(args) -> int:
     with _open() as store:
         _, text = history.show(store, args.doc)
-    if args.seccion or args.lineas:
-        print(reading.view(text, args.seccion, args.lineas))
+    if args.section or args.lines:
+        print(reading.view(text, args.section, args.lines))
     else:
         sys.stdout.write(text)
     return 0
@@ -386,7 +386,7 @@ def cmd_resolve(args) -> int:
 def cmd_wip_doc_import(args) -> int:
     from cairn.migrate import wip_doc
     with _open() as store:
-        rep = wip_doc.import_tree(store, Path(args.raiz), dry_run=args.dry_run)
+        rep = wip_doc.import_tree(store, Path(args.root), dry_run=args.dry_run)
     verb = "Would import" if args.dry_run else "Imported"
     print(f"{verb}: {len(rep.imported)} doc(s), {rep.links} link(s)")
     if args.verbose:
@@ -406,8 +406,8 @@ def cmd_wip_doc_import(args) -> int:
 def cmd_wip_doc_export(args) -> int:
     from cairn.migrate import wip_doc
     with _open() as store:
-        rep = wip_doc.export_tree(store, Path(args.destino), _scopes(args.scope), force=args.force)
-    print(f"Exported: {len(rep.written)} written, {rep.unchanged} unchanged, in {args.destino}")
+        rep = wip_doc.export_tree(store, Path(args.dest), _scopes(args.scope), force=args.force)
+    print(f"Exported: {len(rep.written)} written, {rep.unchanged} unchanged, in {args.dest}")
     for x in rep.stale:
         warn(f"[warning] {x} matches no exported doc (did it change folder?): not deleted")
     return 0
@@ -416,7 +416,7 @@ def cmd_wip_doc_export(args) -> int:
 def cmd_wip_doc_check(args) -> int:
     from cairn.migrate import wip_doc
     with _open() as store:
-        problems = wip_doc.leftovers(store, Path(args.raiz) if args.raiz else None)
+        problems = wip_doc.leftovers(store, Path(args.root) if args.root else None)
     for p in problems:
         print(f"  [warning] {p}")
     print(f"\n  {len(problems)} wip-doc leftover(s)" if problems else "  [OK] no wip-doc leftovers")
@@ -438,7 +438,7 @@ def cmd_wip_doc_unhook(args) -> int:
 
 def cmd_defaults(args) -> int:
     from cairn import mcp_server, templates
-    dest = Path(args.carpeta).expanduser()
+    dest = Path(args.folder).expanduser()
     dest.mkdir(parents=True, exist_ok=True)
     files = {**{f"templates/{k}": v.lstrip("\n") for k, v in templates.defaults().items()},
              "mcp_instructions.md": mcp_server.INSTRUCTIONS}
@@ -507,18 +507,18 @@ def cmd_key(args) -> int:
 
 
 def cmd_authorize(args) -> int:
-    pub = args.clave
+    pub = args.key
     if Path(pub).expanduser().is_file():
         pub = Path(pub).expanduser().read_text(encoding="utf-8").strip()
     command = shlex.split(args.command) if args.command else None
-    for line in access.authorize(args.nodo, pub, ssh=not args.no_ssh, command=command,
+    for line in access.authorize(args.node, pub, ssh=not args.no_ssh, command=command,
                                  replace=args.replace):
         print(line)
     return 0
 
 
 def cmd_revoke(args) -> int:
-    for line in access.revoke(args.nodo):
+    for line in access.revoke(args.node):
         print(line)
     return 0
 
@@ -538,11 +538,11 @@ def cmd_peers(args) -> int:
 
 def cmd_remote(args) -> int:
     if args.remote_cmd == "add":
-        access.remote_add(args.nombre, args.url, key=args.key, command=args.command)
-        print(f"Remote {args.nombre}: {args.url}")
+        access.remote_add(args.name, args.url, key=args.key, command=args.command)
+        print(f"Remote {args.name}: {args.url}")
     elif args.remote_cmd == "remove":
-        access.remote_remove(args.nombre)
-        print(f"Remote {args.nombre} removed")
+        access.remote_remove(args.name)
+        print(f"Remote {args.name} removed")
     else:
         cfg = config.load()
         if not cfg.remotes:
@@ -571,19 +571,19 @@ def cmd_sync(args) -> int:
                 old_keys = [keys.as_fingerprint(k) for k in args.old_key]
             except keys.KeyFileError as e:
                 raise CairnError(f"--old-key: {e}") from None
-            if len(args.remotos) != 1:
+            if len(args.remotes) != 1:
                 raise CairnError("--restore brings this node's log from a single remote: "
                                  "`cairn sync --restore <remote>`")
             if store.log.segments(store.config.node):
                 raise CairnError(f"{store.config.node} already has events of its own: restore is "
                                  "for a node that lost its data and was reinitialized")
-            remote = store.config.remotes.get(args.remotos[0])
+            remote = store.config.remotes.get(args.remotes[0])
             if remote is None:
-                raise CairnError(f"No such remote: {args.remotos[0]}")
+                raise CairnError(f"No such remote: {args.remotes[0]}")
             results = [sync.sync_remote(store, remote, timeout=timeout, restore=True,
                                         old_keys=old_keys, trust_peer_keys=args.trust_peer_keys)]
         else:
-            results = sync.sync_all(store, args.remotos, timeout=timeout)
+            results = sync.sync_all(store, args.remotes, timeout=timeout)
     when = f"{clock.now().astimezone().isoformat(timespec='seconds')} " if args.quiet else ""
     for r in results:
         if not args.quiet or not r.ok:
@@ -618,47 +618,48 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("new", help="creates a doc: diagnosis (bug/infra), plan or reference")
     p.add_argument("area")
-    p.add_argument("tema")
-    p.add_argument("tipo", nargs="?", default="infra", help="bug | infra | plan | ref (default: infra)")
-    p.add_argument("--repo", help="the repo it belongs to (default: the PWD's; `varios` if cross-repo)")
+    p.add_argument("topic")
+    p.add_argument("type", nargs="?", default="infra", help="bug | infra | plan | ref (default: infra)")
+    p.add_argument("--repo", help="the repo it belongs to (default: the PWD's; `cross-repo` if it "
+                   "spans several)")
     p.set_defaults(func=cmd_new)
 
-    p = sub.add_parser("close", help="closes a doc (status resuelto/completado/descartado + `cerrado:`)")
+    p = sub.add_parser("close", help="closes a doc (status resolved/completed/discarded + `closed:`)")
     p.add_argument("doc")
     p.add_argument("-f", "--force", action="store_true", help="close even with unchecked `- [ ]` items")
-    p.add_argument("--descartar", metavar="REASON", help="close it unfinished: status `descartado`, "
-                   "the reason in `nota:` (needs no --force)")
+    p.add_argument("--discard", metavar="REASON", help="close it unfinished: status `discarded`, "
+                   "the reason in `note:` (needs no --force)")
     p.set_defaults(func=cmd_close)
 
     p = sub.add_parser("reopen", help="reopens a closed doc (or makes a handoff pending again)")
     p.add_argument("doc")
-    p.add_argument("motivo", nargs="?", help="goes in `nota:`")
+    p.add_argument("reason", nargs="?", help="goes in `note:`")
     p.set_defaults(func=cmd_reopen)
 
     p = sub.add_parser("promote", help="copies sections of a doc to a reference and links them")
     p.add_argument("doc")
     p.add_argument("area")
-    p.add_argument("tema")
-    p.add_argument("--seccion", action="append", help="start of the section's title (repeatable); "
+    p.add_argument("topic")
+    p.add_argument("--section", action="append", help="start of the section's title (repeatable); "
                    "default: Context + Useful commands | Design + Decisions")
     p.add_argument("-f", "--force", action="store_true", help="promote even if already promoted")
     p.set_defaults(func=cmd_promote)
 
     p = sub.add_parser("list", help="lists the docs (default: the open ones)")
     p.add_argument("scope", nargs="?", default="wip", choices=["wip", "done", "ref", "all"])
-    p.add_argument("--por-repo", action="store_true",
+    p.add_argument("--by-repo", action="store_true",
                    help="grouped by repo, with how many there are and when each one changed")
     p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("search", help="searches all docs (regex, case-insensitive)")
-    p.add_argument("patron")
+    p.add_argument("pattern")
     p.add_argument("scope", nargs="?", default="all", choices=["wip", "done", "ref", "all"])
     p.add_argument("--fts", action="store_true", help="full-text search (FTS5) by relevance")
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("weekly", help="digest of what was closed in the last days")
-    p.add_argument("dias", nargs="?", type=int, default=7)
-    p.add_argument("formato", nargs="?", default="resumen", choices=["resumen", "full"])
+    p.add_argument("days", nargs="?", type=int, default=7)
+    p.add_argument("format", nargs="?", default="summary", choices=["summary", "full"])
     p.set_defaults(func=cmd_weekly)
 
     p = sub.add_parser("check", help="is it in order? log, projection and docs (exits 1 if not)")
@@ -674,8 +675,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("show", help="shows a doc as a file; `doc@rev` shows a revision")
     p.add_argument("doc", help="name or id, with @<hash> or @~N for a revision")
-    p.add_argument("--seccion", help="only that section (the start of its title), numbered")
-    p.add_argument("--lineas", help="only those lines (`40-80`, `40-`, `40`), numbered")
+    p.add_argument("--section", help="only that section (the start of its title), numbered")
+    p.add_argument("--lines", help="only those lines (`40-80`, `40-`, `40`), numbered")
     p.set_defaults(func=cmd_show)
 
     p = sub.add_parser("log", help="event history of a doc (or of the whole database)")
@@ -699,7 +700,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("defaults", help="exports the built-in templates and MCP instructions to a "
                        "folder, to customize them")
-    p.add_argument("carpeta")
+    p.add_argument("folder")
     p.add_argument("-f", "--force", action="store_true", help="overwrite files that already exist")
     p.set_defaults(func=cmd_defaults)
 
@@ -726,8 +727,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_key)
 
     p = sub.add_parser("authorize", help="accepts a node's events and gives it ssh sync access")
-    p.add_argument("nodo")
-    p.add_argument("clave", help="its public key (`cairn key` on that node), or a file with it")
+    p.add_argument("node")
+    p.add_argument("key", help="its public key (`cairn key` on that node), or a file with it")
     p.add_argument("--no-ssh", action="store_true",
                    help="only trust its events (it does not connect to this node)")
     p.add_argument("--command", help="how cairn is invoked here, for authorized_keys "
@@ -737,7 +738,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_authorize)
 
     p = sub.add_parser("revoke", help="removes a node's access and rejects its new events")
-    p.add_argument("nodo")
+    p.add_argument("node")
     p.set_defaults(func=cmd_revoke)
 
     p = sub.add_parser("peers", help="the authorized nodes")
@@ -746,17 +747,17 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("remote", help="the nodes this one syncs with")
     rs = r.add_subparsers(dest="remote_cmd", metavar="<add|remove|list>")
     p = rs.add_parser("add")
-    p.add_argument("nombre")
+    p.add_argument("name")
     p.add_argument("url", help="ssh://user@host[:port]")
     p.add_argument("--key", help="ssh key (default: the node's)")
     p.add_argument("--command", help="how cairn is invoked on the other side (default: cairn)")
     p = rs.add_parser("remove")
-    p.add_argument("nombre")
+    p.add_argument("name")
     rs.add_parser("list")
     r.set_defaults(func=cmd_remote, remote_cmd="list")
 
     p = sub.add_parser("sync", help="exchanges events with the remotes")
-    p.add_argument("remotos", nargs="*", help="default: all of them")
+    p.add_argument("remotes", nargs="*", help="default: all of them")
     p.add_argument("--quiet", action="store_true", help="errors only")
     p.add_argument("--timeout", type=float, help="seconds per remote (default: `[sync] timeout`, 60)")
     p.add_argument("--background", action="store_true",
@@ -783,18 +784,18 @@ def build_parser() -> argparse.ArgumentParser:
     w = ms.add_parser("wip-doc", help="from wip-doc: the <root>/{_wip,_done,_ref} tree and its hook")
     ws = w.add_subparsers(dest="wip_doc_cmd", required=True)
     p = ws.add_parser("import", help="imports the docs in <root>/{_wip,_done,_ref} (once)")
-    p.add_argument("raiz", help="the folder that has _wip/, _done/ and _ref/ (e.g. ~/projects)")
+    p.add_argument("root", help="the folder that has _wip/, _done/ and _ref/ (e.g. ~/projects)")
     p.add_argument("--dry-run", action="store_true", help="show what would be imported, writing nothing")
     p.add_argument("-v", "--verbose", action="store_true", help="list each doc")
     p.set_defaults(func=cmd_wip_doc_import)
     p = ws.add_parser("export", help="writes the docs as files in <dest>/{_wip,_done,_ref}")
-    p.add_argument("destino")
+    p.add_argument("dest")
     p.add_argument("scope", nargs="?", default="all", choices=["wip", "done", "ref", "all"])
     p.add_argument("-f", "--force", action="store_true", help="overwrite files with other content")
     p.set_defaults(func=cmd_wip_doc_export)
     p = ws.add_parser("check", help="what is left of wip-doc: docs not imported, files already "
                       "imported, _wip/ inside repos (exits 1 if any)")
-    p.add_argument("raiz", nargs="?", help="default: the projects root")
+    p.add_argument("root", nargs="?", help="default: the projects root")
     p.set_defaults(func=cmd_wip_doc_check)
     p = ws.add_parser("unhook", help="removes wip-doc's handoffs hook from Claude Code")
     p.add_argument("--dry-run", action="store_true", help="shows what it would do, touching nothing")
@@ -804,17 +805,17 @@ def build_parser() -> argparse.ArgumentParser:
     hs = h.add_subparsers(dest="handoff_cmd", metavar="<new|take|drop|list|hook>", required=True)
     p = hs.add_parser("new", help="leaves a pending note")
     p.add_argument("area")
-    p.add_argument("tema")
-    p.add_argument("--para", action="append", help="which repo it is for (repeatable; default: `repo:`)")
+    p.add_argument("topic")
+    p.add_argument("--to", action="append", help="which repo it is for (repeatable; default: `repo:`)")
     p.add_argument("--plan", action="append", help="the plan it points to (repeatable)")
     p.add_argument("--repo", help="the repo it belongs to (default: the PWD's)")
     p.set_defaults(func=cmd_handoff_new)
-    p = hs.add_parser("take", help="prints it and archives it (status usada)")
-    p.add_argument("nota", nargs="?", help="without a name: the only one pending for the PWD's repo")
+    p = hs.add_parser("take", help="prints it and archives it (status taken)")
+    p.add_argument("note", nargs="?", help="without a name: the only one pending for the PWD's repo")
     p.set_defaults(func=cmd_handoff_take)
-    p = hs.add_parser("drop", help="archives it without using it (status descartada)")
-    p.add_argument("nota")
-    p.add_argument("motivo", nargs="?")
+    p = hs.add_parser("drop", help="archives it without using it (status dropped)")
+    p.add_argument("note")
+    p.add_argument("reason", nargs="?")
     p.set_defaults(func=cmd_handoff_drop)
     p = hs.add_parser("list", help="pending ones for the PWD's repo")
     p.add_argument("--all", action="store_true", help="all of them")

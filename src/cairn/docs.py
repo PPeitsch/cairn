@@ -1,7 +1,7 @@
 """Operations on docs: what wip-doc's commands did, now as events.
 
 There are no folders: where a doc "is" (`wip`, `done`, `ref`) follows from its type and status.
-Links between docs (`origen`, `referencias`, `plan`) are stored by id, so closing or reopening
+Links between docs (`origin`, `references`, `plan`) are stored by id, so closing or reopening
 does not break them: the relative paths (`../_ref/x.md`) are computed when showing or exporting.
 
 Every operation returns data (and warnings) and prints nothing: output is the CLI's business,
@@ -30,11 +30,11 @@ from cairn.markdown import (
 from cairn.projection import CLOSED_STATES, OPEN_STATES
 from cairn.store import CairnError, Store, new_doc_id
 
-TIPOS = ("bug", "infra", "plan", "ref")          # the ones `new` creates
-TIPOS_DOC = TIPOS + ("handoff",)                 # the ones that exist (handoff: `handoff new`)
+TYPES = ("bug", "infra", "plan", "ref")          # the ones `new` creates
+DOC_TYPES = TYPES + ("handoff",)                 # the ones that exist (handoff: `handoff new`)
 SCOPES = ("wip", "done", "ref")
 ICON = {"bug": "[bug]  ", "plan": "[plan] ", "ref": "[ref]  ", "infra": "[infra]", "handoff": "[handoff]"}
-LINK_KINDS = ("plan", "origen", "referencias")   # the ones that go into the front-matter as paths
+LINK_KINDS = ("plan", "origin", "references")   # the ones that go into the front-matter as paths
 _NAME_RE = re.compile(r"^[\w.+-]+$")
 
 
@@ -49,18 +49,18 @@ class Doc:
     scope: str
     head: str
     created: str
-    updated: str
+    last_event: str      # when it last changed (for an imported doc, its file's modification time)
     divergent: bool
     links: list[list[str]] = field(default_factory=list)
 
     @property
-    def tipo(self) -> str:
-        t = self.meta.get("tipo")
-        return t if t in TIPOS_DOC else "infra"
+    def type(self) -> str:
+        t = self.meta.get("type")
+        return t if t in DOC_TYPES else "infra"
 
     @property
-    def estado(self) -> str:
-        return str(self.meta.get("estado", ""))
+    def status(self) -> str:
+        return str(self.meta.get("status", ""))
 
     @property
     def repo(self) -> str:
@@ -82,17 +82,17 @@ class Doc:
         return f"_{self.scope}/{self.name}.md"
 
     def date_closed(self) -> str:
-        for k in ("cerrado", "usada", "descartada"):
+        for k in ("closed", "taken", "dropped"):
             if self.meta.get(k):
                 return str(self.meta[k])
-        return self.updated[:10]
+        return self.last_event[:10]
 
 
 def _doc_from_row(store: Store, r) -> Doc:
     links = [[x["kind"], x["dst"]] for x in store.projection.db.execute(
         "SELECT kind, dst FROM links WHERE src = ? ORDER BY rowid", (r["id"],))]
     return Doc(id=r["id"], name=r["name"], meta=json.loads(r["meta"]), body=r["body"],
-               scope=r["scope"], head=r["head"], created=r["created"], updated=r["updated"],
+               scope=r["scope"], head=r["head"], created=r["created"], last_event=r["last_event"],
                divergent=bool(r["divergent"]), links=links)
 
 
@@ -100,7 +100,7 @@ def all_docs(store: Store, scopes: tuple[str, ...] = SCOPES) -> list[Doc]:
     """The docs in those scopes, most recently touched first."""
     marks = ",".join("?" * len(scopes))
     rows = store.projection.db.execute(
-        f"SELECT * FROM docs WHERE scope IN ({marks}) ORDER BY updated DESC, name", scopes).fetchall()
+        f"SELECT * FROM docs WHERE scope IN ({marks}) ORDER BY last_event DESC, name", scopes).fetchall()
     return [_doc_from_row(store, r) for r in rows]
 
 
@@ -167,13 +167,13 @@ def repo_label(doc: Doc) -> str:
     return doc.repo or "(cross-repo)"
 
 
-def estado_label(doc: Doc) -> str:
+def status_label(doc: Doc) -> str:
     if doc.scope == "wip":
-        return "pending" if doc.tipo == "handoff" else "open"
+        return "pending" if doc.type == "handoff" else "open"
     if doc.scope == "ref":
         return "reference"
-    if doc.tipo == "handoff":
-        return f"{doc.meta.get('estado', 'usada')} {fmt_date(doc.date_closed())}"
+    if doc.type == "handoff":
+        return f"{doc.meta.get('status', 'taken')} {fmt_date(doc.date_closed())}"
     return f"closed {fmt_date(doc.date_closed())}"
 
 
@@ -186,37 +186,37 @@ class Result:
     extra: dict = field(default_factory=dict)
 
 
-def _meta_base(store: Store, tipo: str, estado: str | None, repo: str) -> dict:
-    meta = {"tipo": tipo}
+def _meta_base(store: Store, type_: str, status: str | None, repo: str) -> dict:
+    meta = {"type": type_}
     if repo:
         meta["repo"] = repo
-    if estado:
-        meta["estado"] = estado
-    meta["fecha"] = clock.today()
-    if tipo == "ref":
-        meta["actualizado"] = clock.today()
-    meta["autor"] = store.config.author
+    if status:
+        meta["status"] = status
+    meta["date"] = clock.today()
+    if type_ == "ref":
+        meta["updated"] = clock.today()
+    meta["author"] = store.config.author
     return meta
 
 
-def new(store: Store, area: str, tema: str, tipo: str = "infra", repo: str = "") -> Result:
-    if tipo == "handoff":
-        raise CairnError("A handoff is created with: handoff new <area> <tema> [--para R]... "
+def new(store: Store, area: str, topic: str, type_: str = "infra", repo: str = "") -> Result:
+    if type_ == "handoff":
+        raise CairnError("A handoff is created with: handoff new <area> <topic> [--to R]... "
                          "[--plan <doc>]...")
-    if tipo not in TIPOS:
-        raise CairnError(f"Invalid type: {tipo}. Options: {', '.join(TIPOS)}")
-    _check_name_parts(area, tema)
-    title = f"{area} — {tema.replace('_', ' ')}"
-    if tipo == "ref":
+    if type_ not in TYPES:
+        raise CairnError(f"Invalid type: {type_}. Options: {', '.join(TYPES)}")
+    _check_name_parts(area, topic)
+    title = f"{area} — {topic.replace('_', ' ')}"
+    if type_ == "ref":
         # a reference is neither opened nor closed: no date in the name, it is looked up by topic
-        name = f"{area}_{tema}"
+        name = f"{area}_{topic}"
         body = templates.body(store.config.templates_dir, "ref", title)
         meta = _meta_base(store, "ref", None, repo)
     else:
-        infix = "_BUG_" if tipo == "bug" else "_"
-        name = f"{clock.today()}_{area}{infix}{tema}"
-        body = templates.body(store.config.templates_dir, tipo, title)
-        meta = _meta_base(store, tipo, "en_progreso", repo)
+        infix = "_BUG_" if type_ == "bug" else "_"
+        name = f"{clock.today()}_{area}{infix}{topic}"
+        body = templates.body(store.config.templates_dir, type_, title)
+        meta = _meta_base(store, type_, "in_progress", repo)
     doc_id = new_doc_id()
     with store.writer() as w:
         if name_taken(store, name):
@@ -225,16 +225,16 @@ def new(store: Store, area: str, tema: str, tipo: str = "infra", repo: str = "")
     return Result(get(store, doc_id))
 
 
-def close(store: Store, ref: str, force: bool = False, descartar: str | None = None) -> Result:
-    """Closes a finished doc (resuelto/completado) or, with `descartar` (the reason), one that is
-    left unfinished: it becomes `descartado` with the reason in `nota:`, and needs no --force."""
-    if descartar is not None and not descartar.strip():
+def close(store: Store, ref: str, force: bool = False, discard: str | None = None) -> Result:
+    """Closes a finished doc (resolved/completed) or, with `discard` (the reason), one that is
+    left unfinished: it becomes `discarded` with the reason in `note:`, and needs no --force."""
+    if discard is not None and not discard.strip():
         raise CairnError("Discarding needs a reason: it is the only thing that will explain why it "
                          "was left that way.")
     warnings: list[str] = []
     with store.writer() as w:
         doc = find(store, ref)
-        if doc.tipo == "handoff":
+        if doc.type == "handoff":
             raise CairnError(f"{doc.name} is a handoff: it is archived with `handoff take` (to use "
                              "it) or `handoff drop` (to discard it).")
         if doc.scope == "ref":
@@ -244,47 +244,47 @@ def close(store: Store, ref: str, force: bool = False, descartar: str | None = N
         # a doc with an open checklist is not done: closing it removes it from `list` and reports
         # it in `weekly` as finished work, which is exactly what it is not
         pend = pending_items(doc.body)
-        if descartar:
-            if doc.meta.get("nota"):
-                warnings.append(f"[note] Note replaced by the reason: \"{doc.meta['nota']}\"")
-            w.emit("close", doc.id, {"set": {"estado": "descartado", "cerrado": clock.today(),
-                                             "nota": descartar.strip()},
-                                     "unset": ["reabierto"]})
+        if discard:
+            if doc.meta.get("note"):
+                warnings.append(f"[note] Note replaced by the reason: \"{doc.meta['note']}\"")
+            w.emit("close", doc.id, {"set": {"status": "discarded", "closed": clock.today(),
+                                             "note": discard.strip()},
+                                     "unset": ["reopened"]})
         elif pend and not force:
             lines = "\n".join(f"    {n}: {t}" for n, t in pend[:10])
             raise CairnError(f"[warning] {doc.name} has {len(pend)} unchecked pending item(s):\n"
                              f"{lines}\n\nCheck them, delete them, close it anyway with: close "
                              f"{doc.name} --force, or, if it is left unfinished: close {doc.name} "
-                             "--descartar \"reason\"")
+                             "--discard \"reason\"")
         else:
-            if doc.meta.get("nota"):
+            if doc.meta.get("note"):
                 # the note described the open work ("low priority", "reopened because…"); once closed, it lies
-                warnings.append(f"[note] Note dropped on closing: \"{doc.meta['nota']}\" — if it had "
+                warnings.append(f"[note] Note dropped on closing: \"{doc.meta['note']}\" — if it had "
                                 "information about the closing, move it to the doc's body.")
             if pend:
                 warnings.append(f"[warning] Closed with {len(pend)} unchecked pending item(s) (--force)")
-            estado = "completado" if doc.tipo == "plan" else "resuelto"
-            w.emit("close", doc.id, {"set": {"estado": estado, "cerrado": clock.today()},
-                                     "unset": ["nota", "reabierto"]})
+            status = "completed" if doc.type == "plan" else "resolved"
+            w.emit("close", doc.id, {"set": {"status": status, "closed": clock.today()},
+                                     "unset": ["note", "reopened"]})
     return Result(get(store, doc.id), warnings)
 
 
-def reopen(store: Store, ref: str, motivo: str | None = None) -> Result:
+def reopen(store: Store, ref: str, reason: str | None = None) -> Result:
     warnings: list[str] = []
     with store.writer() as w:
         doc = find(store, ref)
         if doc.scope != "done":
             raise CairnError(f"{doc.name} is not closed (it is in {doc.scope}).")
-        if doc.tipo == "handoff":
+        if doc.type == "handoff":
             # taken by mistake, or the conversation was cut short: it waits for the next one again
-            change = {"set": {"estado": "pendiente"}, "unset": ["usada", "descartada", "cerrado"]}
+            change = {"set": {"status": "pending"}, "unset": ["taken", "dropped", "closed"]}
         else:
-            change = {"set": {"estado": "en_progreso"}, "unset": ["cerrado"]}
-        change["set"]["reabierto"] = clock.today()
-        if motivo:
-            change["set"]["nota"] = motivo
+            change = {"set": {"status": "in_progress"}, "unset": ["closed"]}
+        change["set"]["reopened"] = clock.today()
+        if reason:
+            change["set"]["note"] = reason
         else:
-            change["unset"].append("nota")
+            change["unset"].append("note")
             warnings.append("[note] No reason: pass it as the 2nd argument so it stays in the note")
         w.emit("reopen", doc.id, change)
     return Result(get(store, doc.id), warnings)
@@ -299,32 +299,32 @@ PROMOTE_DEFAULTS = {
     False: [("Context", "Contexto"), ("Useful commands", "Comandos útiles")],
 }
 
-def promote(store: Store, ref: str, area: str, tema: str, secciones: list[str] | None = None,
+def promote(store: Store, ref: str, area: str, topic: str, sections: list[str] | None = None,
             force: bool = False) -> Result:
     """A diagnosis tells WHAT HAPPENED; the topology it uncovered or the commands to diagnose
     again say HOW SOMETHING IS. Copies (does not move) those sections to a reference and links
-    the two docs (`origen` / `referencias`)."""
-    _check_name_parts(area, tema)
+    the two docs (`origin` / `references`)."""
+    _check_name_parts(area, topic)
     warnings: list[str] = []
     with store.writer() as w:
         src = find(store, ref)
         if src.scope == "ref":
             raise CairnError(f"{src.name} is already a reference: promote takes open or closed docs.")
-        ref_name = f"{area}_{tema}"
-        secciones = secciones or [next((x for x in alts if section_raw(src.body, x)), alts[0])
-                                   for alts in PROMOTE_DEFAULTS[src.tipo == "plan"]]
+        ref_name = f"{area}_{topic}"
+        sections = sections or [next((x for x in alts if section_raw(src.body, x)), alts[0])
+                                for alts in PROMOTE_DEFAULTS[src.type == "plan"]]
         target = None
         if name_taken(store, ref_name):
             target = find(store, ref_name)
             if target.scope != "ref":
                 raise CairnError(f"{ref_name} exists and is not a reference.")
-            if not force and ["origen", src.id] in target.links:
+            if not force and ["origin", src.id] in target.links:
                 raise CairnError(f"{ref_name} already has sections promoted from {src.name}. "
                                  "--force to add them anyway.")
 
         # gather first: if there is nothing to carry over, nothing is created or touched
         block, carried, skipped = "", [], []
-        for s in secciones:
+        for s in sections:
             raw = section_raw(src.body, s)
             if not raw:
                 skipped.append(f"{s} (does not exist)")
@@ -338,22 +338,22 @@ def promote(store: Store, ref: str, area: str, tema: str, secciones: list[str] |
             block += f"\n---\n\n## {heading}\n\n{content.strip()}\n"
         if not carried:
             raise CairnError(f"Nothing to promote from {src.name}: {', '.join(skipped)}\n"
-                             "Pick sections with --seccion \"<start of the title>\".")
+                             "Pick sections with --section \"<start of the title>\".")
 
         created = target is None
         if created:
             ref_id = new_doc_id()
             body = templates.body(store.config.templates_dir, "ref_header",
-                                  f"{area} — {tema.replace('_', ' ')}")
+                                  f"{area} — {topic.replace('_', ' ')}")
             w.emit("create", ref_id, {"name": ref_name, "body": body,
                                       "meta": _meta_base(store, "ref", None, src.repo)})
         else:
             ref_id, body = target.id, target.body
         w.emit("promote", ref_id, {"body": body.rstrip("\n") + "\n" + block,
-                                   "set": {"actualizado": clock.today()},
-                                   "link_add": [["origen", src.id]]})
-        if ["referencias", ref_id] not in src.links:
-            w.emit("link", src.id, {"link_add": [["referencias", ref_id]]})
+                                   "set": {"updated": clock.today()},
+                                   "link_add": [["origin", src.id]]})
+        if ["references", ref_id] not in src.links:
+            w.emit("link", src.id, {"link_add": [["references", ref_id]]})
     if skipped:
         warnings.append(f"  skipped: {', '.join(skipped)}")
     if created:
@@ -421,10 +421,10 @@ def fts_header(query: str, hits: list[FtsHit], total: int) -> str:
     return f'FTS search "{query}": {total} doc(s), by relevance{cut}'
 
 
-def weekly(store: Store, dias: int = 7) -> tuple[str, list[Doc]]:
-    """What was closed in the last `dias` days (no handoffs: they are not closed work). (since, docs)."""
-    since = (date.fromisoformat(clock.today()) - timedelta(days=dias)).isoformat()
-    docs = [d for d in all_docs(store, ("done",)) if d.tipo != "handoff" and d.date_closed() >= since]
+def weekly(store: Store, days: int = 7) -> tuple[str, list[Doc]]:
+    """What was closed in the last `days` days (no handoffs: they are not closed work). (since, docs)."""
+    since = (date.fromisoformat(clock.today()) - timedelta(days=days)).isoformat()
+    docs = [d for d in all_docs(store, ("done",)) if d.type != "handoff" and d.date_closed() >= since]
     docs.sort(key=lambda d: d.date_closed(), reverse=True)
     return since, docs
 
@@ -460,22 +460,22 @@ def check(store: Store) -> list[str]:
         n = doc.name
         if doc.divergent:
             problems.append(f"{n} has divergent branches: `cairn resolve {n}` to see them and pick one")
-        if doc.meta.get("tipo") not in TIPOS_DOC:
-            problems.append(f"{n} has type '{doc.meta.get('tipo', '')}' (valid: {', '.join(TIPOS_DOC)})")
+        if doc.meta.get("type") not in DOC_TYPES:
+            problems.append(f"{n} has type '{doc.meta.get('type', '')}' (valid: {', '.join(DOC_TYPES)})")
         if doc.scope != "ref":
             if not re.match(r"^\d{4}-\d{2}-\d{2}_", n):
                 problems.append(f"{n} does not start with a YYYY-MM-DD_ date")
-            if doc.estado not in OPEN_STATES | CLOSED_STATES:
-                problems.append(f"{n} has status '{doc.estado}' (unknown)")
-        if doc.tipo == "handoff":
-            if doc.scope == "done" and not (doc.meta.get("usada") or doc.meta.get("descartada")):
-                problems.append(f"{n} is an archived handoff without `usada:` or `descartada:`")
+            if doc.status not in OPEN_STATES | CLOSED_STATES:
+                problems.append(f"{n} has status '{doc.status}' (unknown)")
+        if doc.type == "handoff":
+            if doc.scope == "done" and not (doc.meta.get("taken") or doc.meta.get("dropped")):
+                problems.append(f"{n} is an archived handoff without `taken:` or `dropped:`")
             age = handoff_age(doc)
             if doc.scope == "wip" and age is not None and age > store.config.handoff_stale_days:
                 problems.append(f"{n} is a handoff not taken for {age} days: "
                                 "`handoff take` or `handoff drop`")
-        elif doc.scope == "done" and not doc.meta.get("cerrado"):
-            problems.append(f"{n} is closed without `cerrado:`: weekly falls back to the last change")
+        elif doc.scope == "done" and not doc.meta.get("closed"):
+            problems.append(f"{n} is closed without `closed:`: weekly falls back to the last change")
         for kind, dst in doc.links:
             if dst not in ids:
                 problems.append(f"{n}: the `{kind}` link points to a doc that does not exist ({dst[:8]})")
@@ -490,29 +490,29 @@ def _as_list(v) -> list[str]:
     return [str(x) for x in v] if isinstance(v, list) else [str(v)]
 
 
-def handoff_para(doc: Doc) -> list[str]:
-    """Which conversations it is meant for: `para:`, or if missing, the doc's `repo:`."""
-    return _as_list(doc.meta.get("para")) or _as_list(doc.meta.get("repo"))
+def handoff_to(doc: Doc) -> list[str]:
+    """Which conversations it is meant for: `to:`, or if missing, the doc's `repo:`."""
+    return _as_list(doc.meta.get("to")) or _as_list(doc.meta.get("repo"))
 
 
 def handoff_age(doc: Doc) -> int | None:
     try:
-        return (date.fromisoformat(clock.today()) - date.fromisoformat(str(doc.meta["fecha"]))).days
+        return (date.fromisoformat(clock.today()) - date.fromisoformat(str(doc.meta["date"]))).days
     except (KeyError, TypeError, ValueError):
         return None
 
 
 def pending_handoffs(store: Store, repo: str) -> list[Doc]:
     """The pending handoffs for a conversation in `repo`. From the projects root (repo "") all
-    of them are shown; from a repo, those that name it in `para:`."""
+    of them are shown; from a repo, those that name it in `to:`."""
     out = [d for d in all_docs(store, ("wip",))
-           if d.tipo == "handoff" and d.estado == "pendiente" and (not repo or repo in handoff_para(d))]
+           if d.type == "handoff" and d.status == "pending" and (not repo or repo in handoff_to(d))]
     return sorted(out, key=lambda d: d.name)
 
 
 def modified_date(doc: Doc) -> date:
     """The (local) date of the doc's last change."""
-    ts = datetime.fromisoformat(doc.updated)
+    ts = datetime.fromisoformat(doc.last_event)
     tz = clock.now().tzinfo if os.environ.get("CAIRN_NOW") else None
     return ts.astimezone(tz).date()
 
@@ -534,14 +534,14 @@ def grouped_by_repo(docs_: list[Doc]) -> list[str]:
            "modified to the oldest"]
     for repo, ds in groups.items():
         out += ["", f"{repo} ({len(ds)})"]
-        out += [f"  {d.name}  [{d.tipo} · {estado_label(d)} · {modified_label(d)}]" for d in ds]
+        out += [f"  {d.name}  [{d.type} · {status_label(d)} · {modified_label(d)}]" for d in ds]
     return out
 
 
 def handoff_line(doc: Doc, stale: int = 14) -> str:
     """`stale`: after how many days it is flagged as old (`[docs] handoff_stale_days`)."""
     age = handoff_age(doc)
-    parts = [f"para: {', '.join(handoff_para(doc)) or 'cross-repo'}"]
+    parts = [f"to: {', '.join(handoff_to(doc)) or 'cross-repo'}"]
     if age is not None:
         parts.append("from today" if age == 0 else f"{age} day(s) old")
         if age > stale:
@@ -549,25 +549,25 @@ def handoff_line(doc: Doc, stale: int = 14) -> str:
     return f"{doc.name}  ({'; '.join(parts)})"
 
 
-def handoff_new(store: Store, area: str, tema: str, para: list[str] | None = None,
+def handoff_new(store: Store, area: str, topic: str, to: list[str] | None = None,
                 plans: list[str] | None = None, repo: str = "") -> Result:
-    _check_name_parts(area, tema)
-    para, plans = para or [], plans or []
-    name = f"{clock.today()}_{area}_HANDOFF_{tema}"
-    meta = _meta_base(store, "handoff", "pendiente", repo)
-    if para:
-        meta["para"] = para if len(para) > 1 else para[0]
+    _check_name_parts(area, topic)
+    to, plans = to or [], plans or []
+    name = f"{clock.today()}_{area}_HANDOFF_{topic}"
+    meta = _meta_base(store, "handoff", "pending", repo)
+    if to:
+        meta["to"] = to if len(to) > 1 else to[0]
     doc_id = new_doc_id()
     with store.writer() as w:
         if name_taken(store, name):
             raise CairnError(f"Already exists: {name}")
         links = [["plan", find(store, p).id] for p in plans]
         body = templates.body(store.config.templates_dir, "handoff",
-                              f"{area} — handoff: {tema.replace('_', ' ')}")
+                              f"{area} — handoff: {topic.replace('_', ' ')}")
         w.emit("handoff_new", doc_id, {"name": name, "meta": meta, "body": body, "links": links})
     warnings = []
-    if not (para or repo):
-        warnings.append("[note] No `repo:` and no `--para`: it is only announced in conversations "
+    if not (to or repo):
+        warnings.append("[note] No `repo:` and no `--to`: it is only announced in conversations "
                         "opened in the projects root.")
     return Result(get(store, doc_id), warnings)
 
@@ -575,10 +575,10 @@ def handoff_new(store: Store, area: str, tema: str, para: list[str] | None = Non
 def _pick_handoff(store: Store, ref: str | None, repo: str) -> Doc:
     if ref:
         doc = find(store, ref)
-        if doc.tipo != "handoff":
-            raise CairnError(f"{doc.name} is not a handoff (type: {doc.meta.get('tipo', '?')}).")
-        if doc.estado != "pendiente":
-            raise CairnError(f"{doc.name} is no longer pending: {doc.estado} on {doc.date_closed()} "
+        if doc.type != "handoff":
+            raise CairnError(f"{doc.name} is not a handoff (type: {doc.meta.get('type', '?')}).")
+        if doc.status != "pending":
+            raise CairnError(f"{doc.name} is no longer pending: {doc.status} on {doc.date_closed()} "
                              "(another conversation took it, or it was discarded). `reopen` makes "
                              "it pending again.")
         return doc
@@ -592,24 +592,24 @@ def _pick_handoff(store: Store, ref: str | None, repo: str) -> Doc:
     return pend[0]
 
 
-def _archive_handoff(store: Store, ref: str | None, repo: str, estado: str,
-                     motivo: str | None) -> tuple[Doc, Doc]:
+def _archive_handoff(store: Store, ref: str | None, repo: str, status: str,
+                     reason: str | None) -> tuple[Doc, Doc]:
     """(before, after). Under the writer's lock: if two conversations take it at once, the
     second one sees it is no longer pending, so they do not both use it."""
     with store.writer() as w:
         doc = _pick_handoff(store, ref, repo)
-        date_field = "usada" if estado == "usada" else "descartada"
-        change: dict = {"set": {"estado": estado, date_field: clock.today()}, "unset": ["reabierto"]}
-        if motivo:
-            change["set"]["nota"] = motivo
+        # the status and the field with its date have the same name: `taken` / `dropped`
+        change: dict = {"set": {"status": status, status: clock.today()}, "unset": ["reopened"]}
+        if reason:
+            change["set"]["note"] = reason
         else:
-            change["unset"].append("nota")
-        w.emit("handoff_take" if estado == "usada" else "handoff_drop", doc.id, change)
+            change["unset"].append("note")
+        w.emit("handoff_take" if status == "taken" else "handoff_drop", doc.id, change)
     return doc, get(store, doc.id)
 
 
 def handoff_take(store: Store, ref: str | None = None, repo: str = "") -> Result:
-    before, doc = _archive_handoff(store, ref, repo, "usada", None)
+    before, doc = _archive_handoff(store, ref, repo, "taken", None)
     warnings = []
     age = handoff_age(doc)
     if age is not None and age > store.config.handoff_stale_days:
@@ -623,7 +623,7 @@ def handoff_take(store: Store, ref: str | None = None, repo: str = "") -> Result
             continue
         if plan.scope == "done":
             warnings.append(f"The plan {plan.name} is already closed.")
-        if plan.updated > before.updated:
+        if plan.last_event > before.last_event:
             warnings.append(f"The plan {plan.name} changed after the note was written: "
                             "if they disagree, the plan wins.")
     for raw in _as_list(doc.meta.get("plan")):
@@ -631,8 +631,8 @@ def handoff_take(store: Store, ref: str | None = None, repo: str = "") -> Result
     return Result(doc, warnings)
 
 
-def handoff_drop(store: Store, ref: str, motivo: str | None = None) -> Result:
-    _, doc = _archive_handoff(store, ref, "", "descartada", motivo)
+def handoff_drop(store: Store, ref: str, reason: str | None = None) -> Result:
+    _, doc = _archive_handoff(store, ref, "", "dropped", reason)
     return Result(doc)
 
 

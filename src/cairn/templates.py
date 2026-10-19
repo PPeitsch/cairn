@@ -118,7 +118,7 @@ REF_CONTENT = """
 ## Content
 
 <!-- Notes, mappings, tables, diagrams, reviews: what gets looked up, not what gets closed.
-     Editing it sets `actualizado:` on its own: an old reference lies without warning. -->
+     Editing it sets `updated:` on its own: an old reference lies without warning. -->
 """
 
 HANDOFF = """

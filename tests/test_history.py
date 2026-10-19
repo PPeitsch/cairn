@@ -30,27 +30,28 @@ def plan(store, env, monkeypatch, capsys):
 def test_edit_from_stdin_body_and_front_matter(store, plan, capsys, monkeypatch):
     doc = docs.find(store, plan)
     text = docs.render(store, doc).replace("- [ ]", "- [x] hecho").replace(
-        "estado: en_progreso", "estado: en_monitoreo\nnota: esperando el deploy")
+        # typed by hand with the old (Spanish) names: saved in the canonical vocabulary
+        "status: in_progress", "estado: en_monitoreo\nnota: esperando el deploy")
     out = run(capsys, "edit", plan, "--stdin", stdin=text, monkeypatch=monkeypatch).out
     assert "Saved" in out
     doc = docs.find(store, plan)
     assert "- [x] hecho" in doc.body
-    assert (doc.estado, doc.meta["nota"]) == ("en_monitoreo", "esperando el deploy")
+    assert (doc.status, doc.meta["note"]) == ("monitoring", "esperando el deploy")
     assert "No changes" in run(capsys, "edit", plan, "--stdin", stdin=text, monkeypatch=monkeypatch).out
 
 
 def test_edit_without_front_matter_changes_only_the_body(store, plan, capsys, monkeypatch):
     run(capsys, "edit", plan, "--stdin", stdin="# nuevo\n", monkeypatch=monkeypatch)
     doc = docs.find(store, plan)
-    assert doc.body == "# nuevo\n" and doc.estado == "en_progreso"
+    assert doc.body == "# nuevo\n" and doc.status == "in_progress"
 
 
 def test_edit_set_unset_and_set_state(store, plan, capsys):
     run(capsys, "edit", plan, "--set", "nota=baja: prioridad")
     run(capsys, "edit", plan, "--set", "estado=propuesto")
-    assert docs.find(store, plan).meta["nota"] == "baja: prioridad"
-    run(capsys, "edit", plan, "--unset", "nota")
-    assert "nota" not in docs.find(store, plan).meta
+    assert docs.find(store, plan).meta["note"] == "baja: prioridad"
+    run(capsys, "edit", plan, "--unset", "note")
+    assert "note" not in docs.find(store, plan).meta
     ops = [r[0] for r in store.projection.db.execute(
         "SELECT op FROM revisions ORDER BY seq")]
     assert ops == ["create", "set_state", "set_state", "set_state"]
@@ -59,9 +60,9 @@ def test_edit_set_unset_and_set_state(store, plan, capsys):
 def test_edit_validates_status_and_type(store, plan, capsys):
     assert "close / reopen" in run(capsys, "edit", plan, "--set", "estado=resuelto", ok=False).err
     assert "Unknown status" in run(capsys, "edit", plan, "--set", "estado=raro", ok=False).err
-    assert "tipo" in run(capsys, "edit", plan, "--set", "tipo=otro", ok=False).err
+    assert "type" in run(capsys, "edit", plan, "--set", "tipo=otro", ok=False).err
     assert "promote" in run(capsys, "edit", plan, "--set", "tipo=ref", ok=False).err
-    assert "cannot be removed" in run(capsys, "edit", plan, "--unset", "estado", ok=False).err
+    assert "cannot be removed" in run(capsys, "edit", plan, "--unset", "status", ok=False).err
     assert "key=value" in run(capsys, "edit", plan, "--set", "x", ok=False).err
     run(capsys, "edit", plan, "--set", "tipo=bug")     # between types with a lifecycle, yes
 
@@ -70,9 +71,9 @@ def test_edit_ref_marks_updated(store, env, capsys, monkeypatch):
     run(capsys, "new", "api", "endpoints", "ref")
     monkeypatch.setenv("CAIRN_NOW", "2026-04-01T10:00:00+00:00")
     run(capsys, "edit", "api_endpoints", "--set", "repo=api")
-    assert docs.find(store, "api_endpoints").meta["actualizado"] == HOY   # meta only: it does not change
+    assert docs.find(store, "api_endpoints").meta["updated"] == HOY   # meta only: it does not change
     run(capsys, "edit", "api_endpoints", "--stdin", stdin="# endpoints\n\nGET /x\n", monkeypatch=monkeypatch)
-    assert docs.find(store, "api_endpoints").meta["actualizado"] == "2026-04-01"
+    assert docs.find(store, "api_endpoints").meta["updated"] == "2026-04-01"
 
 
 def test_edit_ignores_link_changes(store, plan, capsys, monkeypatch):
@@ -83,7 +84,7 @@ def test_edit_ignores_link_changes(store, plan, capsys, monkeypatch):
     text = docs.render(store, docs.find(store, plan)).replace("../_ref/api_cache_ref.md", "../_ref/otra.md")
     err = run(capsys, "edit", plan, "--stdin", stdin=text, monkeypatch=monkeypatch).err
     assert "are not edited by hand" in err
-    assert docs.find(store, plan).links == [["referencias", docs.find(store, "api_cache_ref").id]]
+    assert docs.find(store, plan).links == [["references", docs.find(store, "api_cache_ref").id]]
 
 
 def test_interactive_edit(store, plan, capsys, monkeypatch, tmp_path):
@@ -103,12 +104,12 @@ def test_interactive_edit_does_not_overwrite_a_concurrent_change(store, plan, ca
     editor = tmp_path / "editor.sh"
     # while the editor is open, another process changes the doc
     editor.write_text(f'#!/bin/sh\necho x >> "$1"\nCAIRN_NOW= {sys.executable} -m cairn.cli edit {plan} '
-                      '--set nota=otro >/dev/null\n')
+                      '--set note=otro >/dev/null\n')
     editor.chmod(0o755)
     monkeypatch.setenv("VISUAL", str(editor))
     err = run(capsys, "edit", plan, ok=False).err
     assert "changed while you were editing it" in err and "Your version is in" in err
-    assert docs.find(store, plan).meta["nota"] == "otro"
+    assert docs.find(store, plan).meta["note"] == "otro"
 
 
 # ──────────────────────────────────────────────────────────────── history
@@ -120,13 +121,13 @@ def test_log_show_diff(store, plan, capsys, monkeypatch):
     assert [ln.split()[4] for ln in lines] == ["edit", "set_state", "create"]
     primero = lines[-1].split()[0]
     assert "## TL;DR" in run(capsys, "show", f"{plan}@{primero}").out
-    assert "nota: uno" not in run(capsys, "show", f"{plan}@{primero}").out
+    assert "note: uno" not in run(capsys, "show", f"{plan}@{primero}").out
     assert run(capsys, "show", plan).out.endswith("# reescrito\n")
-    assert "nota: uno" in run(capsys, "show", f"{plan}@~1").out
+    assert "note: uno" in run(capsys, "show", f"{plan}@~1").out
     d = run(capsys, "diff", plan).out
     assert "+# reescrito" in d and "-## TL;DR" in d
     d = run(capsys, "diff", plan, primero, "~1").out
-    assert "+nota: uno" in d and "TL;DR" not in d
+    assert "+note: uno" in d and "TL;DR" not in d
     assert "there is no ~5" in run(capsys, "show", f"{plan}@~5", ok=False).err
     assert "at least 4" in run(capsys, "show", f"{plan}@ab", ok=False).err
     assert len(run(capsys, "log", "-n", "2").out.splitlines()) == 2
