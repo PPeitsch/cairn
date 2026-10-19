@@ -1,9 +1,9 @@
-"""Sync entre nodos, al estilo git: `cairn sync` abre `ssh <remoto> cairn sync-peer --stdio` y los
-dos lados se pasan los eventos que le faltan al otro.
+"""Sync between nodes, git style: `cairn sync` opens `ssh <remote> cairn sync-peer --stdio` and the
+two sides send each other the events the other is missing.
 
-Protocolo: un objeto JSON por línea, estrictamente por turnos (nunca escriben los dos a la vez):
+Protocol: one JSON object per line, strictly taking turns (both sides never write at once):
 
-    cliente                                   servidor
+    client                                    server
     {"cairn": "sync", "v": 1, "node": …}  →
                                           ←   {"cairn": "sync", "v": 1, "node": …}  | {"error": …}
     {"inventory": …}                      →
@@ -12,27 +12,27 @@ Protocolo: un objeto JSON por línea, estrictamente por turnos (nunca escriben l
                                           ←   {"result": …}
                                           ←   {"chunk": …} … {"end": true}
 
-El inventario es `{nodo: {segmento: [tamaño, sha256]}}`. Como cada nodo es el único que escribe
-su log, la copia que tiene otro es siempre un prefijo del original: alcanza con mandar los bytes
-desde el tamaño que tiene el otro, después de comprobar (con el hash) que de verdad es un prefijo.
+The inventory is `{node: {segment: [size, sha256]}}`. Since each node is the only one that writes
+its log, the copy another node has is always a prefix of the original: it is enough to send the
+bytes from the size the other side has, after checking (with the hash) that it really is a prefix.
 
-Lo que llega se valida antes de escribir nada: ningún nodo acepta datos de su propio log, ni de
-un nodo desconocido o revocado, ni eventos sin firma válida. Una línea que no se puede leer
-(una escritura cortada en el nodo de origen) se copia igual, para que los logs sigan siendo
-prefijos, y la proyección la ignora.
+What arrives is validated before anything is written: no node accepts data for its own log, nor
+from an unknown or revoked node, nor events without a valid signature. A line that cannot be read
+(a write cut short on the origin node) is copied anyway, so the logs stay prefixes, and the
+projection ignores it.
 
-Restore (`sync --restore <remoto>`): un nodo que perdió sus datos y se reinicializó con el mismo
-nombre pide su propio log. El saludo lleva `"restore": true`; el servidor contesta con las
-claves que tiene registradas para ese nodo (`"keys": {"key", "old"}`) y manda también los bloques
-del log del cliente. El cliente sólo lo acepta si no tiene eventos propios, si la clave vigente
-que el servidor tiene es la suya (si se reinstaló con clave nueva, el servidor la tuvo que
-aceptar antes con `authorize --replace`) y si cada evento verifica con alguna de sus claves.
+Restore (`sync --restore <remote>`): a node that lost its data and was reinitialized with the
+same name asks for its own log. The hello carries `"restore": true`; the server answers with the
+keys it has on record for that node (`"keys": {"key", "old"}`) and also sends the chunks of the
+client's log. The client only accepts it if it has no events of its own, if the current key the
+server has is its own (if it was reinstalled with a new key, the server must have accepted it
+first with `authorize --replace`) and if every event verifies with one of its keys.
 
-Las claves anteriores no se toman a ciegas del servidor: un par comprometido podría mandar una
-inventada y, firmados con ella, eventos viejos falsos a nombre de este nodo. Cada clave anterior
-que el nodo no tenga ya en su config tiene que coincidir con una huella que pasa el usuario
-(`--old-key`, anotada fuera del nodo cuando la clave era la vigente); si no, el restore se corta
-antes de recibir nada. `--trust-peer-keys` acepta las del servidor sin control (lo de antes).
+Previous keys are not taken from the server on faith: a compromised peer could send a made-up one
+and, signed with it, fake old events in this node's name. Every previous key the node does not
+already have in its config must match a fingerprint the user passes (`--old-key`, noted down
+outside the node while the key was current); otherwise the restore stops before receiving
+anything. `--trust-peer-keys` accepts the server's keys without checking them (the old behavior).
 """
 
 from __future__ import annotations
@@ -66,8 +66,8 @@ class ProtocolError(CairnError):
 class Result:
     remote: str
     peer: str = ""
-    sent: int = 0           # eventos que el otro aceptó
-    received: int = 0       # eventos que aceptó este nodo
+    sent: int = 0           # events the other side accepted
+    received: int = 0       # events this node accepted
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -75,10 +75,10 @@ class Result:
         return not self.errors
 
 
-# ──────────────────────────────────────────────────────────────── canal
+# ──────────────────────────────────────────────────────────────── channel
 
 class Channel:
-    """Mensajes JSON de a una línea sobre un par de streams binarios."""
+    """One-line JSON messages over a pair of binary streams."""
 
     def __init__(self, rfile, wfile):
         self.rfile, self.wfile = rfile, wfile
@@ -121,11 +121,11 @@ def _check_hello(msg: dict) -> str:
     return node
 
 
-# ──────────────────────────────────────────────────────────────── qué mandar, qué aceptar
+# ──────────────────────────────────────────────────────────────── what to send, what to accept
 
 def chunks_for(store: Store, theirs: dict, restore: bool = False) -> tuple[list[dict], list[str]]:
-    """Los bloques que al otro le faltan según su inventario. (bloques, conflictos). Con
-    `restore` incluye su propio log."""
+    """The chunks the other side is missing according to its inventory. (chunks, conflicts).
+    With `restore` it includes the other side's own log."""
     out, conflicts = [], []
     if not isinstance(theirs, dict):
         raise ProtocolError("inventario inválido")
@@ -137,7 +137,7 @@ def chunks_for(store: Store, theirs: dict, restore: bool = False) -> tuple[list[
             data = data[:data.rfind(b"\n") + 1]
             size, digest = (theirs.get(node) or {}).get(seg) or [0, hashlib.sha256(b"").hexdigest()]
             if not isinstance(size, int) or size < 0 or size >= len(data):
-                continue                        # lo tiene todo (o más: lo manda el otro)
+                continue                        # it has everything (or more: the other side sends it)
             if hashlib.sha256(data[:size]).hexdigest() != digest:
                 conflicts.append(f"{node}/{seg}: la copia del otro lado no es un prefijo de esta "
                                  "(logs distintos con el mismo nombre de nodo)")
@@ -148,7 +148,7 @@ def chunks_for(store: Store, theirs: dict, restore: bool = False) -> tuple[list[
 
 
 def _validate(store: Store, node: str, data: bytes, restore: bool = False) -> int:
-    """Cuántos eventos válidos trae el bloque; ProtocolError si algo no se acepta."""
+    """How many valid events the chunk carries; ProtocolError if anything is not accepted."""
     peer = store.config.peers.get(node)
     if node == store.config.node:
         if not restore:
@@ -165,7 +165,7 @@ def _validate(store: Store, node: str, data: bytes, restore: bool = False) -> in
         try:
             ev = Event.from_json(raw.decode("utf-8"))
         except (EventError, UnicodeDecodeError):
-            continue                            # línea rota en el origen: se copia, no se proyecta
+            continue                            # broken line at the origin: copied, not projected
         if ev.node != node:
             raise ProtocolError(f"evento de {ev.node} en el log de {node}")
         if why := store.verifier.problem(ev):
@@ -175,8 +175,8 @@ def _validate(store: Store, node: str, data: bytes, restore: bool = False) -> in
 
 
 def receive(store: Store, chunks: list[dict], restore: bool = False) -> tuple[int, list[str]]:
-    """Valida y agrega los bloques. Los que no se aceptan se reportan; los demás entran. Con
-    `restore` se acepta el log propio (el nodo perdió sus datos y lo recupera de un par)."""
+    """Validates and appends the chunks. Those not accepted are reported; the rest go in. With
+    `restore` the own log is accepted (the node lost its data and recovers it from a peer)."""
     accepted, errors = 0, []
     with store.receiving() as log:
         for c in chunks:
@@ -216,10 +216,10 @@ def _inventory(store: Store) -> dict:
     return {**store.log.inventory(), "__self__": store.config.node}
 
 
-# ──────────────────────────────────────────────────────────────── los dos lados
+# ──────────────────────────────────────────────────────────────── the two sides
 
 def serve(store: Store, ch: Channel, as_node: str | None = None) -> Result:
-    """El lado `sync-peer`. `as_node`: la identidad que fijó `authorized_keys`."""
+    """The `sync-peer` side. `as_node`: the identity pinned by `authorized_keys`."""
     res = Result(remote="")
     try:
         hello = ch.recv()
@@ -250,10 +250,10 @@ def serve(store: Store, ch: Channel, as_node: str | None = None) -> Result:
 
 def _adopt_keys(store: Store, record, peer: str, expected: list[str] | None = None,
                 trust_peer: bool = False) -> int:
-    """Restore: comprueba que el par tenga registrada la clave vigente de este nodo y adopta
-    las anteriores que tenga (para verificar lo que este nodo firmó antes), cada una contra las
-    huellas `expected` que pasó el usuario. Cuántas sumó; ProtocolError sin tocar la config si
-    alguna no se puede controlar."""
+    """Restore: checks that the peer has this node's current key on record and adopts the
+    previous ones it has (to verify what this node signed before), each one against the
+    `expected` fingerprints the user passed. Returns how many it added; ProtocolError, without
+    touching the config, if any of them cannot be checked."""
     from cairn import keys
     if not isinstance(record, dict) or not isinstance(record.get("key"), str):
         raise ProtocolError(f"{peer} no contestó el restore (¿otra versión de cairn?)")
@@ -268,29 +268,29 @@ def _adopt_keys(store: Store, record, peer: str, expected: list[str] | None = No
                             f"reinstaló, en {peer} `cairn authorize {store.config.node} '<cairn key>' "
                             "--replace` y volver a probar")
     known = {k.key for k in store.config.old_keys}
-    nuevas = [k for k in old if k.key not in known and k.key != mine]
+    new_keys = [k for k in old if k.key not in known and k.key != mine]
     if not trust_peer:
         wanted = set(expected or ())
         offered = {keys.fingerprint(k.key) for k in old} | {keys.fingerprint(k) for k in known}
         offered.add(keys.fingerprint(mine))
-        if faltan := sorted(wanted - offered):
-            raise ProtocolError(f"{peer} no tiene registrada la clave anterior {', '.join(faltan)} de "
+        if missing := sorted(wanted - offered):
+            raise ProtocolError(f"{peer} no tiene registrada la clave anterior {', '.join(missing)} de "
                                 f"{store.config.node}: o la huella está mal anotada, o {peer} no es "
                                 "de fiar; no se restauró nada")
-        if sin_control := [k for k in nuevas if keys.fingerprint(k.key) not in wanted]:
-            lista = "\n".join(f"  {keys.fingerprint(k.key)}  (hasta {k.until[:19]})"
-                              for k in sin_control)
+        if unchecked := [k for k in new_keys if keys.fingerprint(k.key) not in wanted]:
+            listing = "\n".join(f"  {keys.fingerprint(k.key)}  (hasta {k.until[:19]})"
+                                for k in unchecked)
             raise ProtocolError(
-                f"{peer} dice que {store.config.node} firmó antes con estas claves:\n{lista}\n"
+                f"{peer} dice que {store.config.node} firmó antes con estas claves:\n{listing}\n"
                 "Compararlas con las huellas que anotaste y pasarlas con `--old-key <huella>` "
                 "(una por clave). Si alguna no es tuya, no restaurar desde este par. Sin las "
                 "huellas, `--trust-peer-keys` las acepta sin control. No se restauró nada.")
-    if nuevas:
-        merged = [*store.config.old_keys, *nuevas]
+    if new_keys:
+        merged = [*store.config.old_keys, *new_keys]
         store.config = config.update(lambda raw: raw.setdefault("node", {}).update(
             {"old": config.old_keys_table(merged)}))
         store.verifier = type(store.verifier)(store.config, store.key.public_key())
-    return len(nuevas)
+    return len(new_keys)
 
 
 def client(store: Store, ch: Channel, name: str, restore: bool = False,
@@ -323,7 +323,7 @@ def client(store: Store, ch: Channel, name: str, restore: bool = False,
     return res
 
 
-# ──────────────────────────────────────────────────────────────── transporte ssh
+# ──────────────────────────────────────────────────────────────── ssh transport
 
 def ssh_command(cfg: config.Config, remote: config.Remote) -> list[str]:
     from cairn.access import parse_url
@@ -373,7 +373,7 @@ def sync_remote(store: Store, remote: config.Remote, timeout: float | None = Non
     if killed.is_set():
         res.errors = [f"se cortó por tiempo ({timeout}s)"]
     elif res.errors and err:
-        # si ssh no pudo conectar, su mensaje dice más que "el otro lado cortó"
+        # if ssh could not connect, its message says more than "the other side hung up"
         res.errors = [e for e in res.errors if "cortó la conexión" not in e]
         res.errors.append(err.splitlines()[-1])
     return res
@@ -393,14 +393,14 @@ def serve_stdio(as_node: str | None = None) -> int:
     with Store(config.load()) as store:
         try:
             res = serve(store, Channel(sys.stdin.buffer, sys.stdout.buffer), as_node)
-        except (ProtocolError, OSError) as e:   # el cliente cortó a mitad de camino (lo reporta él)
+        except (ProtocolError, OSError) as e:   # the client hung up halfway (it reports that)
             res = Result(remote="", errors=[str(e)])
     for e in res.errors:
         print(f"cairn sync-peer: {e}", file=sys.stderr)
     return 0 if res.ok else 1
 
 
-# ──────────────────────────────────────────────────────────────── disparadores
+# ──────────────────────────────────────────────────────────────── triggers
 
 def auto_enabled(cfg: config.Config) -> bool:
     return bool(cfg.remotes) and cfg.sync_auto and not os.environ.get("CAIRN_NO_AUTOSYNC")
@@ -408,7 +408,7 @@ def auto_enabled(cfg: config.Config) -> bool:
 
 @contextlib.contextmanager
 def _flock(path: Path, blocking: bool):
-    """Lock exclusivo sobre `path`; sin `blocking`, da False si otro proceso lo tiene."""
+    """Exclusive lock on `path`; without `blocking`, yields False if another process holds it."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a") as f:
         try:
@@ -427,15 +427,15 @@ def _wait_path(cfg: config.Config) -> Path:
 
 
 def running(cfg: config.Config):
-    """Un sync por vez en el nodo (los de las escrituras, el del hook y el del timer)."""
+    """One sync at a time on the node (those from writes, the hook's and the timer's)."""
     return _flock(cfg.data_dir / "sync-run.lock", blocking=True)
 
 
 def wait_turn(cfg: config.Config, delay: float) -> bool:
-    """El debounce: el proceso que toma el lock de espera aguarda `delay` segundos, lo suelta y
-    sincroniza. Mientras alguien espera, una escritura nueva no lanza otro proceso (ver
-    `trigger`): la cubre el que ya espera, porque lee el log recién después de soltar el lock.
-    False si otro proceso ya está esperando."""
+    """The debounce: the process that takes the wait lock waits `delay` seconds, releases it and
+    syncs. While someone is waiting, a new write does not launch another process (see
+    `trigger`): the one already waiting covers it, because it reads the log only after releasing
+    the lock. False if another process is already waiting."""
     with _flock(_wait_path(cfg), blocking=False) as got:
         if got:
             time.sleep(delay)
@@ -443,11 +443,11 @@ def wait_turn(cfg: config.Config, delay: float) -> bool:
 
 
 def trigger(cfg: config.Config, delay: float | None = None) -> bool:
-    """Lanza `cairn sync` en segundo plano después de cada escritura (`Store.writer`) y desde el
-    hook de fin de sesión: lo que no se empuja queda sólo en este nodo. Con `delay` (default
-    `[sync] debounce`) espera antes de sincronizar, para que una ráfaga de escrituras viaje
-    junta; si ya hay un proceso esperando, no lanza otro. La salida va a `<datos>/sync.log`.
-    True si lo lanzó."""
+    """Launches `cairn sync` in the background after every write (`Store.writer`) and from the
+    session-end hook: whatever is not pushed stays only on this node. With `delay` (default
+    `[sync] debounce`) it waits before syncing, so a burst of writes travels together; if a
+    process is already waiting, it does not launch another. Output goes to `<data>/sync.log`.
+    True if it launched it."""
     if not auto_enabled(cfg):
         return False
     delay = cfg.sync_debounce if delay is None else delay

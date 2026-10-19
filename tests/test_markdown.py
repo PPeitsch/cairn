@@ -17,7 +17,7 @@ def test_front_matter_roundtrip():
     assert text.index("tipo") < text.index("estado") < text.index("origen") < text.index("extra")
 
 
-def test_sin_front_matter():
+def test_without_front_matter():
     assert parse_front_matter("# hola\n") == (None, "# hola\n")
     assert parse_front_matter("---\ntipo: bug\n") == (None, "---\ntipo: bug\n")
 

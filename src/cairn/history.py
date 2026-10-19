@@ -1,6 +1,6 @@
-"""Historial de un doc: cada evento de su cadena deja una revisión (`log`, `show doc@rev`, `diff`).
+"""A doc's history: each event in its chain leaves a revision (`log`, `show doc@rev`, `diff`).
 
-Una revisión se nombra por el hash de su evento; alcanza un prefijo de 4+ caracteres, como en git.
+A revision is named by its event's hash; a prefix of 4+ characters is enough, as in git.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ class Rev:
     ts: str
     node: str
     op: str
-    doc: Doc            # el doc como quedó después de este evento
+    doc: Doc            # the doc as it was after this event
 
 
 def revisions(store: Store, doc: Doc) -> list[Rev]:
@@ -48,7 +48,7 @@ def split_ref(ref: str) -> tuple[str, str | None]:
 
 
 def pick(revs: list[Rev], rev: str) -> Rev:
-    """Una revisión por prefijo de hash, o relativa al head: `~1` es la anterior."""
+    """A revision by hash prefix, or relative to the head: `~1` is the previous one."""
     if rev.startswith("~") and rev[1:].isdigit():
         i = len(revs) - 1 - int(rev[1:])
         if i < 0:
@@ -65,7 +65,7 @@ def pick(revs: list[Rev], rev: str) -> Rev:
 
 
 def show(store: Store, ref: str) -> tuple[Doc, str]:
-    """(doc, texto) del doc, o de una revisión si viene `doc@rev`."""
+    """(doc, text) of the doc, or of a revision if given `doc@rev`."""
     name, rev = split_ref(ref)
     doc = docs.find(store, name)
     if rev is None:
@@ -75,8 +75,8 @@ def show(store: Store, ref: str) -> tuple[Doc, str]:
 
 
 def diff(store: Store, ref: str, a: str | None = None, b: str | None = None) -> str:
-    """Diff unificado entre dos revisiones. Sin revisiones: el último cambio; con una: desde ahí
-    hasta el head."""
+    """Unified diff between two revisions. With none: the last change; with one: from there to
+    the head."""
     doc = docs.find(store, ref)
     revs = revisions(store, doc)
     if a is None:
@@ -103,15 +103,15 @@ class LogLine:
 
 
 def log(store: Store, ref: str | None = None, limit: int | None = None) -> list[LogLine]:
-    """Los eventos más nuevos primero: de un doc (con las ramas divergentes y los huérfanos, si
-    hay) o de toda la base."""
+    """The newest events first: of one doc (with its divergent branches and orphans, if any) or
+    of the whole database."""
     db = store.projection.db
     sql = ("SELECT e.id, e.ts, e.node, e.op, e.status, coalesce(d.name, e.doc_id) AS name "
            "FROM events e LEFT JOIN docs d ON d.id = e.doc_id "
            "LEFT JOIN revisions r ON r.event_id = e.id")
     params: tuple = ()
     if ref is not None:
-        # el de un doc sigue su cadena (no el reloj de cada nodo); lo que quedó afuera, al final
+        # a doc's log follows its chain (not each node's clock); whatever is left out goes last
         sql += " WHERE e.doc_id = ? ORDER BY (r.seq IS NULL), r.seq DESC, e.ts DESC, e.rowid DESC"
         params = (docs.find(store, ref).id,)
     else:
@@ -122,23 +122,23 @@ def log(store: Store, ref: str | None = None, limit: int | None = None) -> list[
             for r in db.execute(sql, params)]
 
 
-# ──────────────────────────────────────────────────────────────── ramas divergentes
+# ──────────────────────────────────────────────────────────────── divergent branches
 
 @dataclass
 class Branch:
-    tip: Event                  # el último evento de la rama
-    events: list[Event]         # los de la rama que no están en la principal, en orden
-    state: DocState             # cómo queda el doc si se sigue esta rama
+    tip: Event                  # the branch's last event
+    events: list[Event]         # the branch's events that are not on the main chain, in order
+    state: DocState             # what the doc looks like if this branch is followed
 
 
 def branches(store: Store, doc: Doc) -> list[Branch]:
-    """Las ramas sin resolver de un doc divergente: una por cada punta."""
+    """The unresolved branches of a divergent doc: one per tip."""
     events = store.projection.doc_events(doc.id)
     by_id = {e.id: e for e in events}
     main, divergent, _ = chain(events)
-    estados = dict(store.projection.db.execute(
+    statuses = dict(store.projection.db.execute(
         "SELECT id, status FROM events WHERE doc_id = ?", (doc.id,)).fetchall())
-    pend = {i for i in divergent if estados.get(i) == "divergent"}
+    pend = {i for i in divergent if statuses.get(i) == "divergent"}
     parents = {by_id[i].prev for i in pend}
     out = []
     for tip_id in sorted(pend - parents, key=lambda i: (by_id[i].ts, i)):
@@ -155,7 +155,7 @@ def branches(store: Store, doc: Doc) -> list[Branch]:
 
 
 def _change(cur: Doc, target: DocState) -> dict:
-    """El payload que lleva el doc de su estado actual al de `target`."""
+    """The payload that takes the doc from its current state to `target`'s."""
     p: dict = {}
     if target.body != cur.body:
         p["body"] = target.body
@@ -177,20 +177,20 @@ def _change(cur: Doc, target: DocState) -> dict:
 
 
 def resolve(store: Store, ref: str, keep: str) -> tuple[Doc, int]:
-    """Resuelve las ramas divergentes de un doc. `keep`: `main` (queda como está) o el hash (4+
-    caracteres) de la punta de una rama, cuyo estado pasa a ser el del doc. Devuelve (doc,
-    eventos resueltos)."""
+    """Resolves a doc's divergent branches. `keep`: `main` (it stays as it is) or the hash (4+
+    characters) of a branch tip, whose state becomes the doc's. Returns (doc, resolved
+    events)."""
     with store.writer() as w:
         doc = docs.find(store, ref)
         if not doc.divergent:
             raise CairnError(f"{doc.name} no tiene ramas divergentes.")
-        ramas = branches(store, doc)
-        resolves = sorted(e.id for b in ramas for e in b.events)
+        branch_list = branches(store, doc)
+        resolves = sorted(e.id for b in branch_list for e in b.events)
         payload: dict = {}
         if keep != "main":
             if len(keep) < 4:
                 raise CairnError("La rama se nombra con al menos 4 caracteres del hash de su punta")
-            found = [b for b in ramas if b.tip.id.startswith(keep)]
+            found = [b for b in branch_list if b.tip.id.startswith(keep)]
             if len(found) != 1:
                 raise CairnError(f"{keep} no es la punta de una rama de {doc.name}"
                                  + (" (ambiguo)" if found else "") + ": `cairn resolve "

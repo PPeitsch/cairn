@@ -16,7 +16,7 @@ def test_append_and_read(tmp_path):
     entries = list(log.read_all())
     assert [e.event.doc_id for e in entries] == ["d1", "d2", "d3"]
     assert (tmp_path / "laptop" / "000001.jsonl").is_file()
-    # leer desde una posición devuelve sólo lo que sigue
+    # reading from a position returns only what follows
     rest = list(log.read_segment("laptop", "000001", start=entries[1].end))
     assert [e.event.doc_id for e in rest] == ["d3"]
 
@@ -39,8 +39,8 @@ def test_torn_line_is_isolated(tmp_path):
     log.append([ev(1)])
     seg = tmp_path / "laptop" / "000001.jsonl"
     with open(seg, "a") as f:
-        f.write('{"cortado":')           # una escritura que se cortó a la mitad
-    assert [e.event.doc_id for e in log.read_all()] == ["d1"]   # la línea incompleta no se lee
+        f.write('{"cortado":')           # a write cut off halfway
+    assert [e.event.doc_id for e in log.read_all()] == ["d1"]   # the incomplete line is not read
     log.append([ev(2)])
     entries = list(log.read_all())
     assert [e.event.doc_id if e.event else None for e in entries] == ["d1", None, "d2"]

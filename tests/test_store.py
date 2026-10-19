@@ -82,7 +82,7 @@ def test_projection_is_rebuilt_from_scratch(cfg):
     with Store(cfg) as s:
         create(s)
     cfg.db_path.unlink()
-    with Store(cfg) as s:                 # sin base: se rehace sola desde el log
+    with Store(cfg) as s:                 # no database: it rebuilds itself from the log
         assert len(s.projection.doc_ids()) == 1
 
 
@@ -91,7 +91,7 @@ def test_catch_up_picks_events_from_other_nodes(cfg, peer):
     store = Store(config.load())
     doc = create(store)
     head = store.projection.head(doc)
-    # un evento escrito por otro nodo (como lo dejaría el sync)
+    # an event written by another node (as sync would leave it)
     other = vps.sign(Event.new(node="vps", ts="2026-03-11T00:00:00.000000+00:00", op="edit", doc_id=doc,
                                payload={"body": "desde el vps"}, prev=head))
     EventLog(cfg.logs_dir, "vps").append([other])
@@ -135,11 +135,11 @@ def test_divergence_keeps_both_branches(cfg, peer):
     store.catch_up()
     row = store.projection.db.execute("SELECT divergent, body FROM docs WHERE id = ?", (doc,)).fetchone()
     assert row["divergent"] == 1
-    assert row["body"] == "laptop"        # la rama más vieja es la principal
+    assert row["body"] == "laptop"        # the oldest branch is the main one
     status = dict(store.projection.db.execute("SELECT id, status FROM events").fetchall())
     assert status[mine.id] == "applied" and status[theirs.id] == "divergent"
     before = snapshot(store)
-    store.rebuild()                       # el resultado no depende del orden de llegada
+    store.rebuild()                       # the result does not depend on arrival order
     assert snapshot(store) == before
     store.close()
 

@@ -1,4 +1,4 @@
-"""Punto de entrada del comando `cairn`."""
+"""Entry point of the `cairn` command."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from cairn import (
     history,
     integrate,
     keys,
-    lectura,
+    reading,
     sync,
     transfer,
     tree,
@@ -64,12 +64,12 @@ def cmd_init(args) -> int:
         print(f"Nodo inicializado: {cfg.node}")
     with Store(cfg) as store:
         n = store.projection.count_events()
-        huella = keys.fingerprint(store.public_line())
+        fingerprint = keys.fingerprint(store.public_line())
     print(f"  config:    {cfg.path}")
     print(f"  datos:     {cfg.data_dir}")
     print(f"  proyectos: {cfg.projects}")
     print(f"  eventos:   {n}")
-    print(f"  huella:    {huella}")
+    print(f"  huella:    {fingerprint}")
     print(f"  {FINGERPRINT_NOTE}")
     return 0
 
@@ -83,7 +83,7 @@ def cmd_rebuild(args) -> int:
     return 1 if store.problems else 0
 
 
-# ──────────────────────────────────────────────────────────────── ciclo de vida
+# ──────────────────────────────────────────────────────────────── lifecycle
 
 def cmd_new(args) -> int:
     with _open() as store:
@@ -113,24 +113,24 @@ def cmd_promote(args) -> int:
     with _open() as store:
         r = docs.promote(store, args.doc, args.area, args.tema, args.seccion, force=args.force)
     print(r.doc.name)
-    print(f"  llevadas: {', '.join(r.extra['llevadas'])}")
+    print(f"  llevadas: {', '.join(r.extra['carried'])}")
     _warn_all(r.warnings)
     return 0
 
 
-# ──────────────────────────────────────────────────────────────── consultas
+# ──────────────────────────────────────────────────────────────── queries
 
-def _print_scope(store: Store, scope: str, por_repo: bool = False) -> None:
-    """En `wip` los handoffs van aparte: no son trabajo abierto sino notas que esperan a la
-    próxima conversación."""
-    lista = docs.all_docs(store, (scope,))
-    handoffs = [d for d in lista if scope == "wip" and d.tipo == "handoff"]
-    trabajo = [d for d in lista if d not in handoffs]
-    if por_repo:
-        if trabajo:
-            print("\n".join(docs.por_repo(trabajo)))
+def _print_scope(store: Store, scope: str, by_repo: bool = False) -> None:
+    """In `wip`, handoffs are listed apart: they are not open work but notes waiting for the next
+    conversation."""
+    found = docs.all_docs(store, (scope,))
+    handoffs = [d for d in found if scope == "wip" and d.tipo == "handoff"]
+    work = [d for d in found if d not in handoffs]
+    if by_repo:
+        if work:
+            print("\n".join(docs.grouped_by_repo(work)))
     else:
-        for d in trabajo:
+        for d in work:
             print(d.name)
     if handoffs:
         print("\nhandoffs pendientes:")
@@ -149,7 +149,7 @@ def cmd_list(args) -> int:
     return 0
 
 
-def _resumen(doc: docs.Doc) -> str:
+def _summary(doc: docs.Doc) -> str:
     r = first_sentences(doc.tldr, 1)
     return r[:197] + "..." if len(r) > 200 else r
 
@@ -161,18 +161,18 @@ def cmd_search(args) -> int:
             if not found:
                 print(f"Búsqueda FTS \"{args.patron}\" — sin coincidencias")
                 return 0
-            print(docs.fts_encabezado(args.patron, found, total) + "\n")
+            print(docs.fts_header(args.patron, found, total) + "\n")
             for h in found:
                 d = h.doc
                 print(f"  {docs.ICON[d.tipo]}  {d.title}   ·   {docs.estado_label(d)}   ·   "
                       f"{docs.repo_label(d)}")
                 print(f"      {d.path}")
-                print(f"      {h.fragmento}")
+                print(f"      {h.snippet}")
                 print()
             return 0
         hits, total = docs.search(store, args.patron, _scopes(args.scope))
-        archivos = tree.search_files(store, args.patron, _scopes(args.scope))
-    if not hits and not archivos:
+        files = tree.search_files(store, args.patron, _scopes(args.scope))
+    if not hits and not files:
         print(f"Búsqueda \"{args.patron}\" — sin coincidencias en {total} docs")
         return 0
     print(f"Búsqueda \"{args.patron}\" — {len(hits)} doc(s) de {total}")
@@ -187,14 +187,14 @@ def cmd_search(args) -> int:
         print(f"  {docs.ICON[d.tipo]}  {d.title}   ·   {docs.estado_label(d)}   ·   "
               f"{len(h.lines)} coincidencia(s)")
         print(f"      {d.path}")
-        if r := _resumen(d):
+        if r := _summary(d):
             print(f"      {r}")
         for n, line in h.lines[:3]:
             print(f"      │ {n}: {line.strip()[:140]}")
         print()
-    if archivos:
-        print(f"━━━━━  archivos de scripts/ y validations/  ({len(archivos)})  ━━━━━\n")
-        for f in archivos:
+    if files:
+        print(f"━━━━━  archivos de scripts/ y validations/  ({len(files)})  ━━━━━\n")
+        for f in files:
             print(f"  {f.path}   ·   {len(f.lines)} coincidencia(s)")
             for n, line in f.lines[:3]:
                 print(f"      │ {n}: {line.strip()[:140]}")
@@ -204,47 +204,47 @@ def cmd_search(args) -> int:
 
 def cmd_weekly(args) -> int:
     with _open() as store:
-        since, cerrados = docs.weekly(store, args.dias)
-    hoy = clock.today()
-    total = len(cerrados)
+        since, closed = docs.weekly(store, args.dias)
+    today = clock.today()
+    total = len(closed)
     if args.formato == "full":
-        print(f"## Weekly — docs cerrados entre {since} y {hoy} (últimos {args.dias} días)\n")
+        print(f"## Weekly — docs cerrados entre {since} y {today} (últimos {args.dias} días)\n")
         print(f"_{total} doc(s) cerrado(s)_\n")
-        for d in cerrados:
-            tipo = {"plan": "plan/spec", "bug": "bug"}.get(d.tipo, "diagnóstico")
-            print(f"### {d.title}\n_{tipo} · {d.meta.get('estado', '—')} · cerrado {d.date_closed()} · "
+        for d in closed:
+            kind = {"plan": "plan/spec", "bug": "bug"}.get(d.tipo, "diagnóstico")
+            print(f"### {d.title}\n_{kind} · {d.meta.get('estado', '—')} · cerrado {d.date_closed()} · "
                   f"{docs.repo_label(d)}_\n")
             print(f"{d.tldr or '_(sin TL;DR)_'}\n\n---\n")
         return 0
-    cuenta = {k: sum(1 for d in cerrados if d.tipo == k) for k in ("bug", "infra", "plan")}
-    partes = [f"{docs.ICON[k]} {n} {lbl}" for k, lbl in (("bug", "bugs"), ("infra", "diagnósticos"),
-                                                         ("plan", "planes")) if (n := cuenta[k])]
-    descartados = sum(1 for d in cerrados if d.estado == "descartado")
-    print(f"Semana {fmt_date(since)} – {fmt_date(hoy)} {hoy[:4]}  ·  {total} trabajos cerrados"
-          + (f" ({descartados} descartado(s))" if descartados else ""))
-    if partes:
-        print("   " + " · ".join(partes))
+    counts = {k: sum(1 for d in closed if d.tipo == k) for k in ("bug", "infra", "plan")}
+    parts = [f"{docs.ICON[k]} {n} {lbl}" for k, lbl in (("bug", "bugs"), ("infra", "diagnósticos"),
+                                                        ("plan", "planes")) if (n := counts[k])]
+    discarded = sum(1 for d in closed if d.estado == "descartado")
+    print(f"Semana {fmt_date(since)} – {fmt_date(today)} {today[:4]}  ·  {total} trabajos cerrados"
+          + (f" ({discarded} descartado(s))" if discarded else ""))
+    if parts:
+        print("   " + " · ".join(parts))
     current = None
-    for d in sorted(cerrados, key=docs.repo_label):
+    for d in sorted(closed, key=docs.repo_label):
         repo = docs.repo_label(d)
         if repo != current:
-            n = sum(1 for x in cerrados if docs.repo_label(x) == repo)
+            n = sum(1 for x in closed if docs.repo_label(x) == repo)
             print(f"\n━━━━━  {repo}  ({n})  ━━━━━\n")
             current = repo
-        marca = "   ·   descartado" if d.estado == "descartado" else ""
-        print(f"  {docs.ICON[d.tipo]}  {d.title}   ·   {fmt_date(d.date_closed())}{marca}")
+        mark = "   ·   descartado" if d.estado == "descartado" else ""
+        print(f"  {docs.ICON[d.tipo]}  {d.title}   ·   {fmt_date(d.date_closed())}{mark}")
         print(f"      {first_sentences(d.tldr, 2) or '(sin TL;DR)'}\n")
     return 0
 
 
 def cmd_check(args) -> int:
     with _open() as store:
-        problemas = docs.check(store) + tree.problems(store)
+        problems = docs.check(store) + tree.problems(store)
         print(f"cairn check   (nodo: {store.config.node}, datos: {store.config.data_dir})")
-    for p in problemas:
+    for p in problems:
         print(f"  [aviso] {p}")
-    print(f"\n  {len(problemas)} problema(s)" if problemas else "  [OK] todo en orden")
-    return 1 if problemas else 0
+    print(f"\n  {len(problems)} problema(s)" if problems else "  [OK] todo en orden")
+    return 1 if problems else 0
 
 
 # ──────────────────────────────────────────────────────────────── handoffs
@@ -278,43 +278,43 @@ def cmd_handoff_drop(args) -> int:
 def cmd_handoff_list(args) -> int:
     with _open() as store:
         repo = "" if args.all else _cwd_repo(store)
-        pend = docs.handoffs_pendientes(store, repo)
-    donde = repo or "toda la raíz de proyectos"
+        pend = docs.pending_handoffs(store, repo)
+    where = repo or "toda la raíz de proyectos"
     if not pend:
-        print(f"Sin handoffs pendientes para {donde}.")
+        print(f"Sin handoffs pendientes para {where}.")
         return 0
-    print(f"Handoffs pendientes para {donde}:")
+    print(f"Handoffs pendientes para {where}:")
     for d in pend:
-        print(f"  {docs.handoff_linea(d, store.config.handoff_stale_days)}")
+        print(f"  {docs.handoff_line(d, store.config.handoff_stale_days)}")
     return 0
 
 
 def cmd_handoff_hook(args) -> int:
-    """SessionStart: si hay handoffs pendientes para el repo de la conversación, lo avisa como
-    contexto. Nunca frena el arranque: ante cualquier error sale callado."""
+    """SessionStart: if there are pending handoffs for the conversation's repo, it announces them
+    as context. It never blocks startup: on any error it exits silently."""
     try:
         try:
             data = json.loads(sys.stdin.read() or "{}")
         except ValueError:
             data = {}
-        # al retomar o después de compactar, la conversación ya lo vio (o ya la tomó)
+        # on resume or after compaction, the conversation already saw it (or already took it)
         if data.get("source") in ("resume", "compact"):
             return 0
         with _open() as store:
             if sync.auto_enabled(store.config):
-                # traer lo que dejó otra máquina antes de mirar (callado: si falla, sigue local)
+                # pull what another machine left before looking (silently: if it fails, stay local)
                 sync.sync_all(store, timeout=store.config.sync_hook_timeout)
             repo = repo_of_path(Path(data.get("cwd") or os.getcwd()), store.config.projects)
-            texto = docs.handoff_hook_context(store, repo)
-        if texto:
+            text = docs.handoff_hook_context(store, repo)
+        if text:
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
-                                                     "additionalContext": texto}}, ensure_ascii=False))
-    except Exception:  # noqa: BLE001 — un hook roto no puede trabar la conversación
+                                                     "additionalContext": text}}, ensure_ascii=False))
+    except Exception:  # noqa: BLE001 — a broken hook must not block the conversation
         pass
     return 0
 
 
-# ──────────────────────────────────────────────────────────────── edit / historial
+# ──────────────────────────────────────────────────────────────── edit / history
 
 def cmd_edit(args) -> int:
     with _open() as store:
@@ -337,7 +337,7 @@ def cmd_show(args) -> int:
     with _open() as store:
         _, text = history.show(store, args.doc)
     if args.seccion or args.lineas:
-        print(lectura.vista(text, args.seccion, args.lineas))
+        print(reading.view(text, args.seccion, args.lineas))
     else:
         sys.stdout.write(text)
     return 0
@@ -347,9 +347,9 @@ def cmd_log(args) -> int:
     with _open() as store:
         lines = history.log(store, args.doc, args.n)
     for ln in lines:
-        marca = "" if ln.status == "applied" else f"  [{ln.status}]"
+        mark = "" if ln.status == "applied" else f"  [{ln.status}]"
         print(f"{ln.event_id[:10]}  {ln.ts[:19].replace('T', ' ')}  {ln.node:<10} {ln.op:<13} "
-              f"{ln.doc_name}{marca}")
+              f"{ln.doc_name}{mark}")
     return 0
 
 
@@ -371,9 +371,9 @@ def cmd_resolve(args) -> int:
         if not doc.divergent:
             print(f"{doc.name} no tiene ramas divergentes.")
             return 0
-        ramas = history.branches(store, doc)
-        print(f"{doc.name}: la principal (head {doc.head[:10]}) y {len(ramas)} rama(s) divergente(s).\n")
-        for b in ramas:
+        branches = history.branches(store, doc)
+        print(f"{doc.name}: la principal (head {doc.head[:10]}) y {len(branches)} rama(s) divergente(s).\n")
+        for b in branches:
             print(f"rama {b.tip.id[:10]}  {b.tip.ts[:19].replace('T', ' ')}  {b.tip.node}  "
                   f"({len(b.events)} evento(s): {', '.join(e.op for e in b.events)})")
             sys.stdout.write(history.branch_diff(store, doc, b) or "  (mismo contenido que la principal)\n")
@@ -387,8 +387,8 @@ def cmd_resolve(args) -> int:
 def cmd_import(args) -> int:
     with _open() as store:
         rep = transfer.import_tree(store, Path(args.raiz), dry_run=args.dry_run)
-    verbo = "Se importarían" if args.dry_run else "Importados"
-    print(f"{verbo}: {len(rep.imported)} doc(s), {rep.links} vínculo(s)")
+    verb = "Se importarían" if args.dry_run else "Importados"
+    print(f"{verb}: {len(rep.imported)} doc(s), {rep.links} vínculo(s)")
     if args.verbose:
         for x in rep.imported:
             print(f"  {x}")
@@ -434,8 +434,8 @@ def cmd_defaults(args) -> int:
 
 
 def cmd_mcp(args) -> int:
-    config.load()       # sin `init`, avisar acá y no al primer llamado de una tool
-    from cairn import mcp_server  # sólo este comando carga `mcp`
+    config.load()       # without `init`, say so here and not on the first tool call
+    from cairn import mcp_server  # only this command loads `mcp`
     mcp_server.run()
     return 0
 
@@ -451,9 +451,9 @@ def cmd_integrate(args) -> int:
         rep = integrate.claude_code(command, remove=args.remove, dry_run=args.dry_run,
                                     mcp=not args.no_mcp, hooks=not args.no_hooks,
                                     replace_wip_doc=args.replace_wip_doc)
-    prefijo = "[dry-run] " if args.dry_run else ""
+    prefix = "[dry-run] " if args.dry_run else ""
     for a in rep.actions:
-        print(f"{prefijo}{a}")
+        print(f"{prefix}{a}")
     for u in rep.unchanged:
         print(f"ya estaba: {u}")
     if not rep.actions:
@@ -461,7 +461,7 @@ def cmd_integrate(args) -> int:
     return 0
 
 
-# ──────────────────────────────────────────────────────────────── sync y acceso
+# ──────────────────────────────────────────────────────────────── sync and access
 
 FINGERPRINT_NOTE = ("anotá la huella fuera de este nodo (p. ej. en el gestor de contraseñas): si "
                     "pierde sus datos, `sync --restore --old-key <huella>` la usa para no aceptar "
@@ -480,7 +480,7 @@ def cmd_key(args) -> int:
     if args.fingerprint:
         print(keys.fingerprint(line))
     else:
-        print(line)                       # sola en stdout: `authorize <nodo> "$(cairn key)"`
+        print(line)                       # alone on stdout: `authorize <node> "$(cairn key)"`
         warn(f"huella: {keys.fingerprint(line)} ({FINGERPRINT_NOTE})")
     return 0
 
@@ -504,12 +504,12 @@ def cmd_revoke(args) -> int:
 
 def cmd_peers(args) -> int:
     cfg = config.load()
-    con_ssh = set(access.ssh_authorized_nodes())
+    with_ssh = set(access.ssh_authorized_nodes())
     if not cfg.peers:
         print("Sin nodos autorizados.")
     for p in cfg.peers.values():
-        estado = f"revocado {p.revoked}" if p.revoked else ("ssh" if p.node in con_ssh else "sólo eventos")
-        print(f"{p.node:<16} {estado:<18} {keys.fingerprint(p.key)}")
+        access_ = f"revocado {p.revoked}" if p.revoked else ("ssh" if p.node in with_ssh else "sólo eventos")
+        print(f"{p.node:<16} {access_:<18} {keys.fingerprint(p.key)}")
         for k in p.old:
             print(f"{'':<16} {'anterior':<18} {keys.fingerprint(k.key)}  hasta {k.until[:19]}")
     return 0
@@ -536,7 +536,7 @@ def cmd_sync(args) -> int:
         sync.trigger(config.load(), delay=0)
         return 0
     if args.after is not None and not sync.wait_turn(config.load(), args.after):
-        return 0        # ya hay otro esperando: ese sincroniza también lo de esta escritura
+        return 0        # another one is already waiting: it also syncs this write
     with sync.running(config.load()), _open() as store:
         if not store.config.remotes:
             if args.quiet:
@@ -563,10 +563,10 @@ def cmd_sync(args) -> int:
                                         old_keys=old_keys, trust_peer_keys=args.trust_peer_keys)]
         else:
             results = sync.sync_all(store, args.remotos, timeout=timeout)
-    cuando = f"{clock.now().astimezone().isoformat(timespec='seconds')} " if args.quiet else ""
+    when = f"{clock.now().astimezone().isoformat(timespec='seconds')} " if args.quiet else ""
     for r in results:
         if not args.quiet or not r.ok:
-            print(f"{cuando}{r.remote} ({r.peer or '?'}): {r.sent} enviado(s), {r.received} recibido(s)"
+            print(f"{when}{r.remote} ({r.peer or '?'}): {r.sent} enviado(s), {r.received} recibido(s)"
                   + ("" if r.ok else f", {len(r.errors)} error(es)"))
         sys.stdout.flush()
         for e in r.errors:
@@ -754,7 +754,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=float, help="segundos por remoto (default: `[sync] timeout`, 60)")
     p.add_argument("--background", action="store_true",
                    help="lanzarlo en segundo plano y volver (salida en <datos>/sync.log)")
-    p.add_argument("--after", type=float, metavar="SEG", help=argparse.SUPPRESS)  # el debounce
+    p.add_argument("--after", type=float, metavar="SEG", help=argparse.SUPPRESS)  # the debounce
     p.add_argument("--restore", action="store_true",
                    help="traer también el log de este nodo (perdió sus datos y se reinicializó)")
     p.add_argument("--old-key", action="append", default=[], metavar="HUELLA",
@@ -803,12 +803,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         code = args.func(args) or 0
-        sys.stdout.flush()         # que un pipe cerrado salte acá y no al salir
+        sys.stdout.flush()         # so a closed pipe surfaces here and not at exit
         return code
     except (CairnError, config.ConfigError) as e:
         warn(str(e))
         return 1
-    except BrokenPipeError:        # `cairn search x | head`: salir callado, sin el aviso de flush
+    except BrokenPipeError:        # `cairn search x | head`: exit quietly, without the flush warning
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         return 0
 

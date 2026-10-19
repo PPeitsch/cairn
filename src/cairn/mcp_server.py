@@ -1,10 +1,12 @@
-"""Servidor MCP stdio: las operaciones de cairn como tools, contra la base local del nodo.
+"""Stdio MCP server: cairn's operations as tools, against the node's local database.
 
-Cada tool abre el store, llama a la misma capa de operaciones que el CLI (`docs`, `edit`,
-`history`) y devuelve texto para el modelo. Los errores esperables (`CairnError`, config) vuelven
-como error de la tool, con el mensaje, sin traceback.
+Each tool opens the store, calls the same operations layer as the CLI (`docs`, `edit`,
+`history`) and returns text for the model. Expected errors (`CairnError`, config) come back as a
+tool error, with the message and no traceback.
 
-Este módulo es el único que importa `mcp`: los demás comandos no lo cargan.
+This is the only module that imports `mcp`: the other commands do not load it.
+
+The tool docstrings are the descriptions the model reads, so they are user-facing text.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cairn import __version__, config, docs, edit, history, lectura, tree
+from cairn import __version__, config, docs, edit, history, reading, tree
 from cairn.context import repo_of_path
 from cairn.store import CairnError, Store
 
@@ -98,7 +100,7 @@ def _scopes(scope: str) -> tuple[str, ...]:
 
 
 def _tool_errors(fn):
-    """Los errores para el usuario vuelven como error de la tool, con su mensaje."""
+    """User-facing errors come back as a tool error, with their message."""
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         try:
@@ -108,12 +110,12 @@ def _tool_errors(fn):
     return wrapper
 
 
-def _linea(d: docs.Doc) -> str:
+def _line(d: docs.Doc) -> str:
     return f"{d.name}  [{d.tipo} · {docs.estado_label(d)} · {docs.repo_label(d)}]"
 
 
-def _con_avisos(texto: str, warnings: list[str]) -> str:
-    return "\n".join([texto, *warnings]) if warnings else texto
+def _with_warnings(text: str, warnings: list[str]) -> str:
+    return "\n".join([text, *warnings]) if warnings else text
 
 
 # ──────────────────────────────────────────────────────────────── tools
@@ -126,18 +128,18 @@ def cairn_list(scope: Scope = "wip", por_repo: bool = True) -> str:
     usar esos conteos y nombrar todos los docs del grupo, no recontarlos. `por_repo=false` da una
     línea por doc."""
     with _open() as store:
-        lista = docs.all_docs(store, _scopes(scope))
-    if not lista:
+        found = docs.all_docs(store, _scopes(scope))
+    if not found:
         return f"Sin docs en {scope}."
-    trabajo = [d for d in lista if not (d.scope == "wip" and d.tipo == "handoff")]
-    handoffs = [d for d in lista if d.scope == "wip" and d.tipo == "handoff"]
+    work = [d for d in found if not (d.scope == "wip" and d.tipo == "handoff")]
+    handoffs = [d for d in found if d.scope == "wip" and d.tipo == "handoff"]
     if por_repo:
-        out = docs.por_repo(trabajo) if trabajo else []
+        out = docs.grouped_by_repo(work) if work else []
     else:
-        out = [f"{_linea(d)}  ({docs.modificado_label(d)})" for d in trabajo]
+        out = [f"{_line(d)}  ({docs.modified_label(d)})" for d in work]
     if handoffs:
-        viejo = store.config.handoff_stale_days
-        out += ["", "handoffs pendientes:", *(f"  {docs.handoff_linea(d, viejo)}" for d in handoffs)]
+        stale = store.config.handoff_stale_days
+        out += ["", "handoffs pendientes:", *(f"  {docs.handoff_line(d, stale)}" for d in handoffs)]
     return "\n".join(out).lstrip("\n")
 
 
@@ -153,31 +155,31 @@ def cairn_search(pattern: str, scope: Scope = "all", fts: bool = False) -> str:
             found, total = docs.search_fts(store, pattern, _scopes(scope))
             if not found:
                 return f'Búsqueda FTS "{pattern}": sin coincidencias.'
-            return "\n".join([docs.fts_encabezado(pattern, found, total),
-                              *(f"{_linea(h.doc)}\n    {h.fragmento}" for h in found)])
+            return "\n".join([docs.fts_header(pattern, found, total),
+                              *(f"{_line(h.doc)}\n    {h.snippet}" for h in found)])
         hits, total = docs.search(store, pattern, _scopes(scope))
-        archivos = tree.search_files(store, pattern, _scopes(scope))
-    if not hits and not archivos:
+        files = tree.search_files(store, pattern, _scopes(scope))
+    if not hits and not files:
         return f'Búsqueda "{pattern}": sin coincidencias en {total} docs.'
     max_docs, max_lines = store.config.search_max_docs, store.config.search_max_lines
-    ranked = sorted(hits, key=lambda h: -len(h.lines))     # estable: empata por repo y fecha
+    ranked = sorted(hits, key=lambda h: -len(h.lines))     # stable: ties keep repo and date order
     shown, rest = ranked[:max_docs], ranked[max_docs:]
     out = [f'Búsqueda "{pattern}": {len(hits)} doc(s) de {total}'
            + (f"; se muestran los {len(shown)} con más coincidencias" if rest else "")]
     for h in shown:
-        out.append(_linea(h.doc))
+        out.append(_line(h.doc))
         out += [f"    {n}: {line.strip()[:160]}" for n, line in h.lines[:max_lines]]
         if len(h.lines) > max_lines:
             out.append(f"    (+{len(h.lines) - max_lines} más)")
     if rest:
-        nombres = ", ".join(f"{h.doc.name} ({len(h.lines)})" for h in rest[:25])
+        names = ", ".join(f"{h.doc.name} ({len(h.lines)})" for h in rest[:25])
         extra = f" y {len(rest) - 25} más" if len(rest) > 25 else ""
-        out += ["", f"Otros {len(rest)} doc(s) con menos coincidencias: {nombres}{extra}.",
+        out += ["", f"Otros {len(rest)} doc(s) con menos coincidencias: {names}{extra}.",
                 "Para acotar: un patrón más preciso, fts=true (por relevancia) o "
                 "cairn_show con lineas= alrededor de una coincidencia."]
-    if archivos:
-        out += ["", f"archivos de scripts/ y validations/ ({len(archivos)}):"]
-        for f in archivos:
+    if files:
+        out += ["", f"archivos de scripts/ y validations/ ({len(files)}):"]
+        for f in files:
             out.append(f"  {f.path}")
             out += [f"    {n}: {line.strip()[:160]}" for n, line in f.lines[:5]]
     return "\n".join(out)
@@ -194,7 +196,7 @@ def cairn_show(doc: str, seccion: str | None = None, lineas: str | None = None,
     with _open() as store:
         _, text = history.show(store, doc)
         max_chars = store.config.show_max_chars
-    return lectura.vista(text, seccion, lineas, completo, max_chars)
+    return reading.view(text, seccion, lineas, completo, max_chars)
 
 
 def cairn_new(area: str, tema: str, tipo: Literal["bug", "infra", "plan", "ref"] = "infra",
@@ -225,17 +227,17 @@ def cairn_edit(doc: str, old_text: str | None = None, new_text: str | None = Non
         raise ToolError("old_text/new_text o body, no los dos")
     with _open() as store:
         d = docs.find(store, doc)
-        nuevo = body
+        new_body = body
         if old_text is not None:
             n = d.body.count(old_text)
             if n != 1:
                 raise ToolError(f"old_text aparece {n} veces en el cuerpo de {d.name}: tiene que "
                                 "aparecer exactamente una (sumá contexto)")
-            nuevo = d.body.replace(old_text, new_text, 1)
-        r = edit.apply(store, d.id, body=nuevo, set_=set_fields, unset=unset_fields,
+            new_body = d.body.replace(old_text, new_text, 1)
+        r = edit.apply(store, d.id, body=new_body, set_=set_fields, unset=unset_fields,
                        expected_head=d.head)
-    estado = "Guardado" if r.extra.get("changed") else "Sin cambios"
-    return _con_avisos(f"{estado}: {r.doc.name}", r.warnings)
+    outcome = "Guardado" if r.extra.get("changed") else "Sin cambios"
+    return _with_warnings(f"{outcome}: {r.doc.name}", r.warnings)
 
 
 def cairn_close(doc: str, force: bool = False, descartar: str | None = None) -> str:
@@ -246,7 +248,7 @@ def cairn_close(doc: str, force: bool = False, descartar: str | None = None) -> 
     cairn_handoff_drop."""
     with _open() as store:
         r = docs.close(store, doc, force=force, descartar=descartar)
-    return _con_avisos(f"Cerrado: {r.doc.name} ({r.doc.estado})", r.warnings)
+    return _with_warnings(f"Cerrado: {r.doc.name} ({r.doc.estado})", r.warnings)
 
 
 def cairn_reopen(doc: str, motivo: str | None = None) -> str:
@@ -254,7 +256,7 @@ def cairn_reopen(doc: str, motivo: str | None = None) -> str:
     `nota:`."""
     with _open() as store:
         r = docs.reopen(store, doc, motivo)
-    return _con_avisos(f"Reabierto: {r.doc.name}", r.warnings)
+    return _with_warnings(f"Reabierto: {r.doc.name}", r.warnings)
 
 
 def cairn_promote(doc: str, area: str, tema: str, secciones: list[str] | None = None,
@@ -265,19 +267,19 @@ def cairn_promote(doc: str, area: str, tema: str, secciones: list[str] | None = 
     como referencia: lo que ES, no lo que pasó."""
     with _open() as store:
         r = docs.promote(store, doc, area, tema, secciones, force=force)
-    return _con_avisos(f"{r.doc.name}\n  llevadas: {', '.join(r.extra['llevadas'])}", r.warnings)
+    return _with_warnings(f"{r.doc.name}\n  llevadas: {', '.join(r.extra['carried'])}", r.warnings)
 
 
 def cairn_weekly(dias: int = 7) -> str:
     """Lo cerrado en los últimos `dias` días, con su TL;DR (sin handoffs)."""
     with _open() as store:
-        since, cerrados = docs.weekly(store, dias)
-    if not cerrados:
+        since, closed = docs.weekly(store, dias)
+    if not closed:
         return f"Nada cerrado desde {since}."
-    out = [f"{len(cerrados)} doc(s) cerrado(s) desde {since}:"]
-    for d in cerrados:
-        cierre = "descartado" if d.estado == "descartado" else "cerrado"
-        out += ["", f"{d.title}  [{d.tipo} · {cierre} {d.date_closed()} · {docs.repo_label(d)}]",
+    out = [f"{len(closed)} doc(s) cerrado(s) desde {since}:"]
+    for d in closed:
+        how = "descartado" if d.estado == "descartado" else "cerrado"
+        out += ["", f"{d.title}  [{d.tipo} · {how} {d.date_closed()} · {docs.repo_label(d)}]",
                 d.tldr or "(sin TL;DR)"]
     return "\n".join(out)
 
@@ -286,10 +288,10 @@ def cairn_check() -> str:
     """Verifica que la base esté en orden: log, proyección, docs (estado, nombres, links,
     handoffs viejos) y la raíz de proyectos (docs sueltos fuera de cairn, archivos mal ubicados)."""
     with _open() as store:
-        problemas = docs.check(store) + tree.problems(store)
-    if not problemas:
+        problems = docs.check(store) + tree.problems(store)
+    if not problems:
         return "Todo en orden."
-    return "\n".join([f"{len(problemas)} problema(s):", *(f"  - {p}" for p in problemas)])
+    return "\n".join([f"{len(problems)} problema(s):", *(f"  - {p}" for p in problems)])
 
 
 def cairn_log(doc: str | None = None, n: int = 20) -> str:
@@ -323,7 +325,7 @@ def cairn_handoff_new(area: str, tema: str, body: str | None = None, para: list[
         warnings = r.warnings
         if body is not None:
             r = edit.apply(store, r.doc.id, body=body)
-        return _con_avisos(f"Handoff creado: {r.doc.name}\n\n{docs.render(store, r.doc)}", warnings)
+        return _with_warnings(f"Handoff creado: {r.doc.name}\n\n{docs.render(store, r.doc)}", warnings)
 
 
 def cairn_handoff_list(all_repos: bool = False, repo: str | None = None) -> str:
@@ -331,13 +333,13 @@ def cairn_handoff_list(all_repos: bool = False, repo: str | None = None) -> str:
     `all_repos=true`."""
     with _open() as store:
         r = "" if all_repos else _cwd_repo(store, repo)
-        pend = docs.handoffs_pendientes(store, r)
-    donde = r or "toda la raíz de proyectos"
+        pend = docs.pending_handoffs(store, r)
+    where = r or "toda la raíz de proyectos"
     if not pend:
-        return f"Sin handoffs pendientes para {donde}."
-    viejo = store.config.handoff_stale_days
-    return "\n".join([f"Handoffs pendientes para {donde}:",
-                      *(f"  {docs.handoff_linea(d, viejo)}" for d in pend)])
+        return f"Sin handoffs pendientes para {where}."
+    stale = store.config.handoff_stale_days
+    return "\n".join([f"Handoffs pendientes para {where}:",
+                      *(f"  {docs.handoff_line(d, stale)}" for d in pend)])
 
 
 def cairn_handoff_take(nota: str | None = None, repo: str | None = None) -> str:
@@ -345,8 +347,8 @@ def cairn_handoff_take(nota: str | None = None, repo: str | None = None) -> str:
     se toma. Sin `nota`, la única pendiente para el repo de la conversación."""
     with _open() as store:
         r = docs.handoff_take(store, nota, _cwd_repo(store, repo))
-    avisos = [f"[aviso] {a}" for a in r.warnings]
-    return _con_avisos(f"Handoff tomado: {r.doc.name} (archivado, estado: usada)", avisos) \
+    warnings = [f"[aviso] {a}" for a in r.warnings]
+    return _with_warnings(f"Handoff tomado: {r.doc.name} (archivado, estado: usada)", warnings) \
         + "\n\n" + r.doc.body
 
 
@@ -367,7 +369,7 @@ TOOLS = [
 
 
 def instructions() -> str:
-    """Las de `[mcp] instructions` si la config las define; si no, las de fábrica."""
+    """The ones in `[mcp] instructions` if the config sets them; otherwise the built-in ones."""
     try:
         path = config.load().mcp_instructions
     except config.ConfigError:

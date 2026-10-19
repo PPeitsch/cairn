@@ -1,39 +1,39 @@
-"""Configuración del nodo y rutas.
+"""Node configuration and paths.
 
-    ~/.config/cairn/config.toml     config: nodo, datos, árbol de proyectos, autor, remotos,
-                                    pares autorizados y sync
-    ~/.local/share/cairn/           datos: logs/, la base SQLite y la clave del nodo
+    ~/.config/cairn/config.toml     config: node, data, projects tree, author, remotes,
+                                    authorized peers and sync
+    ~/.local/share/cairn/           data: logs/, the SQLite database and the node key
 
     [node]           name
-    [node.old.<n>]   key, until: claves anteriores de este nodo (`key --rotate`, `sync --restore`)
+    [node.old.<n>]   key, until: previous keys of this node (`key --rotate`, `sync --restore`)
     [data]           path
-    [docs]           projects, author (default: `git config user.name`, o el usuario del sistema),
-                     handoff_stale_days (default 14), templates (carpeta con plantillas propias:
+    [docs]           projects, author (default: `git config user.name`, or the system user),
+                     handoff_stale_days (default 14), templates (folder with custom templates:
                      bug.md, infra.md, plan.md, ref.md, ref_header.md, handoff.md),
-                     file_dirs (default "scripts, validations"), prune (carpetas que no se
-                     recorren), max_depth (default 4)
-    [mcp]            instructions = archivo con las instrucciones del servidor (reemplaza las de
-                     fábrica; `cairn defaults <carpeta>` las exporta para partir de ellas),
-                     show_max_chars (default 8000: un doc más largo, cairn_show lo da como índice),
-                     search_max_docs (default 15) y search_max_lines (default 3): el tope de lo
-                     que devuelve cairn_search con regex
+                     file_dirs (default "scripts, validations"), prune (folders that are not
+                     walked), max_depth (default 4)
+    [mcp]            instructions = file with the server instructions (replaces the built-in
+                     ones; `cairn defaults <folder>` exports them as a starting point),
+                     show_max_chars (default 8000: cairn_show returns a longer doc as an outline),
+                     search_max_docs (default 15) and search_max_lines (default 3): the cap on
+                     what cairn_search returns with a regex
     [claude_code]    mcp_name (default "cairn"), start_timeout (default 30), end_timeout (10)
-    [sync]           auto = "true" | "false"   (sync en segundo plano y en los hooks; default true),
-                     timeout (segundos por remoto, default 60), hook_timeout (el pull del hook
-                     de handoffs, default 15), debounce (segundos que espera el sync que dispara
-                     una escritura, para juntar una ráfaga en un solo viaje; default 5),
-                     interval (minutos entre syncs del timer de `integrate systemd`, default 15)
-    [remotes.<n>]    url = "ssh://usuario@host[:puerto]", key (opcional), command (opcional)
-    [peers.<nodo>]   key = "ssh-ed25519 AAAA…", ssh = "true" | "false", revoked = "<fecha>"
-    [peers.<nodo>.old.<n>]  key, until: claves anteriores (`authorize --replace`); cada una
-                     verifica sólo los eventos de antes de `until`
+    [sync]           auto = "true" | "false"   (background sync and sync in the hooks; default
+                     true), timeout (seconds per remote, default 60), hook_timeout (the pull in
+                     the handoffs hook, default 15), debounce (seconds the sync triggered by a
+                     write waits, to batch a burst into a single trip; default 5), interval
+                     (minutes between syncs of the `integrate systemd` timer, default 15)
+    [remotes.<n>]    url = "ssh://user@host[:port]", key (optional), command (optional)
+    [peers.<node>]   key = "ssh-ed25519 AAAA…", ssh = "true" | "false", revoked = "<date>"
+    [peers.<node>.old.<n>]  key, until: previous keys (`authorize --replace`); each one
+                     verifies only the events from before `until`
 
-Variables de entorno (sobre todo para los tests):
+Environment variables (mostly for the tests):
 
-    CAIRN_CONFIG_DIR   carpeta de la config (default: $XDG_CONFIG_HOME/cairn o ~/.config/cairn)
-    CAIRN_DATA_DIR     carpeta de datos; pisa la de la config
-                       (default: $XDG_DATA_HOME/cairn o ~/.local/share/cairn)
-    CAIRN_PROJECTS     raíz de los proyectos; pisa la de la config (default: ~/projects)
+    CAIRN_CONFIG_DIR   config folder (default: $XDG_CONFIG_HOME/cairn or ~/.config/cairn)
+    CAIRN_DATA_DIR     data folder; overrides the config's
+                       (default: $XDG_DATA_HOME/cairn or ~/.local/share/cairn)
+    CAIRN_PROJECTS     projects root; overrides the config's (default: ~/projects)
 """
 
 from __future__ import annotations
@@ -79,8 +79,7 @@ def default_data_dir() -> Path:
 
 
 def default_author() -> str:
-    """Quién firma los docs si la config no lo dice: el `user.name` de git, o el usuario del
-    sistema."""
+    """Who signs the docs if the config does not say: git's `user.name`, or the system user."""
     try:
         out = subprocess.run(["git", "config", "--get", "user.name"], capture_output=True, text=True,
                              timeout=5)
@@ -95,7 +94,7 @@ def default_author() -> str:
 
 
 def default_node_name() -> str:
-    """El hostname, llevado al formato de nombre de nodo."""
+    """The hostname, turned into a valid node name."""
     name = re.sub(r"[^a-z0-9_-]+", "-", socket.gethostname().split(".")[0].lower()).strip("-_")
     return name if NODE_RE.match(name) else "nodo"
 
@@ -104,29 +103,29 @@ def default_node_name() -> str:
 class Remote:
     name: str
     url: str
-    key: Path | None = None        # clave ssh; default: la del nodo
-    command: str | None = None     # cómo se invoca cairn del otro lado (default: `cairn`)
+    key: Path | None = None        # ssh key; default: the node's
+    command: str | None = None     # how cairn is invoked on the other side (default: `cairn`)
 
 
 @dataclass(frozen=True)
 class OldKey:
-    """Una clave que el nodo usó antes de cambiarla: verifica sólo eventos anteriores a `until`."""
+    """A key the node used before changing it: it verifies only events prior to `until`."""
     key: str                       # `ssh-ed25519 AAAA…`
-    until: str                     # marca de tiempo (como la de los eventos) del reemplazo
+    until: str                     # timestamp (like the events') of the replacement
 
 
 @dataclass(frozen=True)
 class Peer:
     node: str
     key: str                       # `ssh-ed25519 AAAA…`
-    ssh: bool = True               # si tiene acceso por ssh a este nodo (authorized_keys)
+    ssh: bool = True               # whether it has ssh access to this node (authorized_keys)
     revoked: str | None = None
     old: tuple[OldKey, ...] = ()
 
 
 @dataclass(frozen=True)
 class Config:
-    path: Path              # el config.toml
+    path: Path              # the config.toml
     node: str
     data_dir: Path
     projects: Path
@@ -134,7 +133,7 @@ class Config:
     remotes: dict[str, Remote] = field(default_factory=dict)
     peers: dict[str, Peer] = field(default_factory=dict)
     sync_auto: bool = True
-    old_keys: tuple[OldKey, ...] = ()     # las claves anteriores de este mismo nodo
+    old_keys: tuple[OldKey, ...] = ()     # the previous keys of this same node
     sync_timeout: float = 60
     sync_hook_timeout: float = 15
     sync_debounce: float = 5
@@ -191,7 +190,7 @@ def load_raw() -> tuple[Path, dict]:
 
 
 def _old_keys(t, where: str, path: Path) -> tuple[OldKey, ...]:
-    """`[<where>.old.<n>]` key, until: las claves anteriores, en el orden en que se cambiaron."""
+    """`[<where>.old.<n>]` key, until: the previous keys, in the order they were replaced."""
     if t is None:
         return ()
     if not isinstance(t, dict) or not all(isinstance(v, dict) and v.get("key") and v.get("until")
@@ -219,7 +218,7 @@ def _num(t: dict, key: str, default, kind, where: str, path: Path):
 
 
 def _names(t: dict, key: str, default: tuple[str, ...]) -> tuple[str, ...]:
-    """Una lista como texto separado por comas (la config sólo guarda strings) o como lista."""
+    """A list as comma-separated text (the config only stores strings) or as a list."""
     v = t.get(key)
     if v is None:
         return default
@@ -279,7 +278,7 @@ def load() -> Config:
     )
 
 
-# ──────────────────────────────────────────────────────────────── escritura
+# ──────────────────────────────────────────────────────────────── writing
 
 def _toml_str(v: str) -> str:
     out = v.replace("\\", "\\\\").replace('"', '\\"')
@@ -292,8 +291,8 @@ def _toml_key(k: str) -> str:
 
 
 def dump_toml(data: dict) -> str:
-    """TOML de tablas con valores string, y tablas de tablas (`[remotes.vps]`): alcanza para la
-    config y evita una dependencia."""
+    """TOML of tables with string values, and tables of tables (`[remotes.vps]`): enough for the
+    config, and it avoids a dependency."""
     out = []
 
     def emit(prefix: str, table: dict) -> None:
@@ -322,8 +321,8 @@ def save_raw(raw: dict) -> Path:
 
 
 def update(fn) -> Config:
-    """Carga la config cruda, la deja modificar a `fn(raw)` y la guarda. Si lo que queda no es
-    una config válida, vuelve a la anterior y lo dice."""
+    """Loads the raw config, lets `fn(raw)` modify it and saves it. If the result is not a valid
+    config, it goes back to the previous one and says so."""
     path, raw = load_raw()
     before = path.read_text(encoding="utf-8")
     fn(raw)

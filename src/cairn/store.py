@@ -1,17 +1,18 @@
-"""El almacén de un nodo: el log de eventos y su proyección, siempre en sintonía.
+"""A node's store: the event log and its projection, always in step.
 
-Toda escritura pasa por `Store.writer()`: toma el lock, pone la proyección al día con el log,
-deja armar los eventos (con su `prev` calculado contra el head actual de cada doc), los agrega
-al log y los proyecta. Si el bloque falla, no se escribe nada. Si escribió, dispara el sync en
-segundo plano (`sync.trigger`, con debounce).
+Every write goes through `Store.writer()`: it takes the lock, brings the projection up to date
+with the log, lets the caller build the events (with their `prev` computed against each doc's
+current head), appends them to the log and projects them. If the block fails, nothing is written.
+If it wrote something, it triggers a background sync (`sync.trigger`, debounced).
 
-La proyección se pone al día sola (`catch_up`) leyendo lo que el log tiene después de la última
-posición proyectada; así un evento que llegó por sync, o uno que quedó escrito en el log pero no
-proyectado por un corte, se recupera sin intervención.
+The projection catches up on its own (`catch_up`) by reading what the log has after the last
+projected position; so an event that arrived by sync, or one that was written to the log but not
+projected because of a crash, is recovered without intervention.
 
-Cada evento va firmado con la clave del nodo (ver `keys`), que se genera sola la primera vez. Al
-proyectar se verifica la firma de todos, propios y ajenos: uno sin firma válida de un nodo
-conocido no entra a la base (queda en `problems` y `check` lo muestra), llegue como llegue al log.
+Every event is signed with the node key (see `keys`), which is generated on first use. When
+projecting, every signature is verified, own and foreign: an event without a valid signature
+from a known node does not enter the database (it stays in `problems` and `check` shows it), no
+matter how it reached the log.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from cairn.projection import DocState, Projection
 
 
 class CairnError(Exception):
-    """Un error para mostrarle al usuario (sin traceback)."""
+    """An error meant for the user (shown without a traceback)."""
 
 
 @dataclass
@@ -56,13 +57,13 @@ def new_doc_id() -> str:
 
 
 class Verifier:
-    """Qué nodos se conocen y con qué claves: la propia y las de los pares autorizados. Un par
-    revocado conserva su clave para verificar lo que ya escribió (el sync rechaza lo nuevo). Una
-    clave anterior (`[...old.<n>]`) verifica sólo los eventos de antes de su reemplazo."""
+    """Which nodes are known and with which keys: the own one and those of the authorized peers.
+    A revoked peer keeps its key to verify what it already wrote (sync rejects anything new). A
+    previous key (`[...old.<n>]`) verifies only the events from before it was replaced."""
 
     def __init__(self, config: Config, own: keys.Ed25519PublicKey):
         self.node = config.node
-        # nodo → [(clave, hasta)]: la vigente con `hasta` None
+        # node → [(key, until)]: the current one with `until` None
         self.keys: dict[str, list[tuple[keys.Ed25519PublicKey, str | None]]] = {
             config.node: [(own, None)]}
         self.bad_peers: list[str] = []
@@ -85,7 +86,7 @@ class Verifier:
                 self.bad_peers.append(f"[{where}.old]: {e}")
 
     def problem(self, ev: Event) -> str | None:
-        """Por qué no se acepta el evento, o None si la firma es válida."""
+        """Why the event is not accepted, or None if the signature is valid."""
         cands = self.keys.get(ev.node)
         if cands is None:
             return f"evento {ev.id[:12]} de un nodo no autorizado ({ev.node}): `cairn authorize`"
@@ -104,7 +105,7 @@ class Store:
         config.data_dir.mkdir(parents=True, exist_ok=True)
         self.log = EventLog(config.logs_dir, config.node)
         self.projection = Projection(config.db_path)
-        self.problems: list[str] = []      # líneas del log que no se proyectaron, y por qué
+        self.problems: list[str] = []      # log lines that were not projected, and why
         with self._lock():
             self.key = self._node_key()
             self.verifier = Verifier(config, self.key.public_key())
@@ -141,9 +142,9 @@ class Store:
             finally:
                 fcntl.flock(f, fcntl.LOCK_UN)
 
-    # -- sincronía log → proyección
+    # -- keeping log → projection in step
     def catch_up(self) -> int:
-        """Proyecta lo que el log tiene y la proyección todavía no. Devuelve cuántos eventos."""
+        """Projects what the log has and the projection does not yet. Returns how many events."""
         pos = self.projection.positions()
         sizes = self.log.sizes()
         new: list[Event] = []
@@ -172,7 +173,7 @@ class Store:
         return len(new)
 
     def rebuild(self) -> int:
-        """Descarta la proyección y la rehace desde el log."""
+        """Discards the projection and rebuilds it from the log."""
         with self._lock():
             self.problems.clear()
             self.projection.reset()
@@ -189,20 +190,20 @@ class Store:
                 self.log.append(w.events)
                 self.catch_up()
         if w.events:
-            # toda escritura sale hacia los remotos, sea del MCP o del CLI: lo que no se empuja
-            # queda sólo en este nodo. Import tardío: sync depende de store.
+            # every write goes out to the remotes, whether from the MCP or the CLI: whatever is
+            # not pushed stays only on this node. Late import: sync depends on store.
             from cairn import sync
             sync.trigger(self.config)
 
     @contextmanager
     def receiving(self):
-        """Para el sync: bajo el lock se agregan al log los bloques que llegaron de otros nodos;
-        al salir se proyectan."""
+        """For sync: under the lock, the chunks that arrived from other nodes are appended to
+        the log; on exit they are projected."""
         with self._lock():
             yield self.log
             self.catch_up()
 
-    # -- lectura
+    # -- reading
     def state(self, doc_id: str) -> DocState | None:
         return self.projection.state(doc_id)
 

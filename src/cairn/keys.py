@@ -1,15 +1,17 @@
-"""La clave del nodo: ed25519, en formato OpenSSH.
+"""The node key: ed25519, in OpenSSH format.
 
-Una sola clave por nodo, para dos cosas:
+One key per node, for two things:
 
-- **firmar los eventos** que escribe: la firma va sobre el `id` del evento, con un prefijo de
-  dominio (`cairn-event-v1\\0`) para que una firma de evento no sirva en otro protocolo;
-- **autenticarse por ssh** al sincronizar: el archivo es una clave privada OpenSSH común
-  (`ssh -i <datos>/node_key`), y su pública es la línea que va al `authorized_keys` del otro.
+- **signing the events** it writes: the signature covers the event `id`, with a domain prefix
+  (`cairn-event-v1\\0`) so that an event signature is useless in any other protocol;
+- **authenticating over ssh** when syncing: the file is a plain OpenSSH private key
+  (`ssh -i <data>/node_key`), and its public half is the line that goes into the other side's
+  `authorized_keys`.
 
-La pública se escribe como una línea de `authorized_keys`: `ssh-ed25519 AAAA… cairn:<nodo>`.
-Su huella (`SHA256:…`, la misma que da `ssh-keygen -lf`) es la forma corta de anotarla fuera del
-nodo: es lo que pide `sync --restore --old-key` para no tomar a ciegas las claves viejas de un par.
+The public key is written as an `authorized_keys` line: `ssh-ed25519 AAAA… cairn:<node>`.
+Its fingerprint (`SHA256:…`, the same one `ssh-keygen -lf` prints) is the short form to note
+down outside the node: it is what `sync --restore --old-key` asks for, so a peer's old keys are
+not taken on faith.
 """
 
 from __future__ import annotations
@@ -27,11 +29,11 @@ SIG_DOMAIN = b"cairn-event-v1\0"
 
 
 class KeyFileError(ValueError):
-    """Una clave que no se puede leer o no es ed25519."""
+    """A key that cannot be read or is not ed25519."""
 
 
 def generate(path: Path, node: str) -> Ed25519PrivateKey:
-    """Crea la clave del nodo (privada con permisos 0600, pública al lado en `.pub`)."""
+    """Creates the node key (private with mode 0600, public next to it as `.pub`)."""
     key = Ed25519PrivateKey.generate()
     pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH,
                             serialization.NoEncryption())
@@ -59,7 +61,7 @@ def public_line(pub: Ed25519PublicKey, node: str) -> str:
 
 
 def parse_public(line: str) -> Ed25519PublicKey:
-    """Una pública en formato `ssh-ed25519 AAAA… [comentario]`."""
+    """A public key in `ssh-ed25519 AAAA… [comment]` format."""
     parts = line.strip().split()
     if len(parts) < 2 or parts[0] != "ssh-ed25519":
         raise KeyFileError("se espera una clave pública `ssh-ed25519 AAAA…`")
@@ -73,20 +75,20 @@ def parse_public(line: str) -> Ed25519PublicKey:
 
 
 def normalize_public(line: str) -> str:
-    """`ssh-ed25519 AAAA…` sin el comentario: la forma que se guarda y se compara."""
+    """`ssh-ed25519 AAAA…` without the comment: the form that is stored and compared."""
     parse_public(line)
     return " ".join(line.split()[:2])
 
 
 def fingerprint(line: str) -> str:
-    """`SHA256:…` de una pública, igual que `ssh-keygen -lf`."""
+    """`SHA256:…` of a public key, same as `ssh-keygen -lf`."""
     parse_public(line)
     blob = base64.b64decode(line.split()[1])
     return "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode("ascii").rstrip("=")
 
 
 def as_fingerprint(value: str) -> str:
-    """Una huella `SHA256:…` o una pública entera, llevada a huella (para comparar)."""
+    """A `SHA256:…` fingerprint, or a whole public key turned into one (for comparing)."""
     value = value.strip()
     if value.startswith("SHA256:"):
         body = value[len("SHA256:"):]
