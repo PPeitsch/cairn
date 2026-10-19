@@ -136,6 +136,18 @@ def test_promote_log_diff_weekly_check(node):
     assert "All in order" in ok("cairn_check")
 
 
+def test_link(node):
+    ok("cairn_new", {"area": "demo", "topic": "a", "type": "plan"})
+    ok("cairn_new", {"area": "demo", "topic": "b", "type": "plan"})
+    args = {"doc": "2026-03-10_demo_b", "kind": "origin", "other": "2026-03-10_demo_a"}
+    assert ok("cairn_link", args) == "Linked: 2026-03-10_demo_b origin → 2026-03-10_demo_a"
+    assert "origin:\n  - ../_wip/2026-03-10_demo_a.md" in ok("cairn_show", {"doc": "2026-03-10_demo_b"})
+    assert "already had" in ok("cairn_link", args)
+    assert ok("cairn_link", {**args, "remove": True}).startswith("Unlinked")
+    err, text = call("cairn_link", {**args, "kind": "parent"})
+    assert err
+
+
 def test_bounded_reading(node, monkeypatch):
     largo = "## TL;DR\n\nResumen.\n\n## Detalle\n\n" + "linea de relleno con costo\n" * 400
     ok("cairn_new", {"area": "demo", "topic": "largo", "type": "plan", "body": "# demo largo\n\n" + largo})

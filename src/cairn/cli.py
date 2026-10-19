@@ -117,6 +117,15 @@ def cmd_promote(args) -> int:
     return 0
 
 
+def cmd_link(args) -> int:
+    with _open() as store:
+        r = docs.link(store, args.doc, args.kind, args.other, remove=args.remove)
+    if r.extra["changed"]:
+        print(f"{'Unlinked' if args.remove else 'Linked'}: {r.doc.name} {args.kind} → {r.extra['other']}")
+    _warn_all(r.warnings)
+    return 0
+
+
 # ──────────────────────────────────────────────────────────────── queries
 
 def _print_scope(store: Store, scope: str, by_repo: bool = False) -> None:
@@ -651,6 +660,13 @@ def build_parser() -> argparse.ArgumentParser:
                    "default: Context + Useful commands | Design + Decisions")
     p.add_argument("-f", "--force", action="store_true", help="promote even if already promoted")
     p.set_defaults(func=cmd_promote)
+
+    p = sub.add_parser("link", help="links two docs by hand: <doc> gets <other> under <kind>:")
+    p.add_argument("doc")
+    p.add_argument("kind", choices=list(docs.LINK_KINDS))
+    p.add_argument("other")
+    p.add_argument("--remove", action="store_true", help="removes the link instead")
+    p.set_defaults(func=cmd_link)
 
     p = sub.add_parser("list", help="lists the docs (default: the open ones)")
     p.add_argument("scope", nargs="?", default="wip", choices=["wip", "done", "ref", "all"])

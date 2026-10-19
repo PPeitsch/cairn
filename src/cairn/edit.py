@@ -4,8 +4,8 @@
 The doc is edited as a file (`show` → editor → back), so the front-matter can be changed by hand
 just like in wip-doc, with two limits:
 
-- links (`origin`, `references`, `plan`) are not edited: `promote` and `handoff new` manage
-  them, and in the file they are computed paths;
+- links (`origin`, `references`, `plan`) are not edited: `promote`, `handoff new` and `link`
+  manage them, and in the file they are computed paths;
 - `status` cannot go from open to closed or back: that is `close` / `reopen` /
   `handoff take|drop`, which change other fields at the same time.
 
@@ -100,7 +100,7 @@ def apply(store: Store, ref: str, text: str | None = None, set_: dict | None = N
                 meta = vocab.meta(meta)
                 if docs.link_paths(store, doc) != {k: _as_list(meta.get(k)) for k in LINK_KINDS}:
                     warnings.append("[note] Links (origin, references, plan) are not edited by "
-                                    "hand: the change was ignored.")
+                                    "hand: the change was ignored (`cairn link`).")
         if set_ or unset:
             meta = dict(meta if meta is not None else doc.meta)
             for k in vocab.fields(unset or []):

@@ -173,6 +173,7 @@ cairn close <doc> [--force]                 # stops if unchecked `- [ ]` items r
 cairn close <doc> --discard "reason"        # unfinished: status `discarded`, reason in `note:`
 cairn reopen <doc> [reason]
 cairn promote <doc> <area> <topic> [--section S]...   # sections to a reference, linked
+cairn link <doc> <origin|references|plan> <other> [--remove]   # <doc> gets <other> under <kind>:
 
 cairn list [wip|done|ref|all] [--by-repo]   # by repo: with counts and date of the last change
 cairn search <regex> [scope]                # or --fts <query> by relevance
@@ -307,8 +308,8 @@ entries to `settings.json` (it does not touch the other hooks). It is idempotent
 `CLAUDE_CONFIG_DIR`.
 
 `cairn mcp` is the stdio server the agent launches: it exposes the docs' lifecycle
-(`cairn_new`, `cairn_edit`, `cairn_close`, `cairn_reopen`, `cairn_promote`), the queries
-(`cairn_list`, `cairn_search`, `cairn_show`, `cairn_weekly`, `cairn_check`, `cairn_log`,
+(`cairn_new`, `cairn_edit`, `cairn_close`, `cairn_reopen`, `cairn_promote`, `cairn_link`), the
+queries (`cairn_list`, `cairn_search`, `cairn_show`, `cairn_weekly`, `cairn_check`, `cairn_log`,
 `cairn_diff`) and the handoffs (`cairn_handoff_new|list|take|drop`). Its instructions carry the
 conventions for when and how to document.
 

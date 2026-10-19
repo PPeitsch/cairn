@@ -17,7 +17,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-from cairn import clock, templates
+from cairn import clock, templates, vocab
 from cairn.markdown import (
     COMMENT,
     dump_front_matter,
@@ -364,6 +364,40 @@ def promote(store: Store, ref: str, area: str, topic: str, sections: list[str] |
         warnings.append("[note] Check that what was added does not contradict what the reference "
                         "already said.")
     return Result(get(store, ref_id), warnings, {"carried": carried})
+
+
+def link(store: Store, ref: str, kind: str, other: str, remove: bool = False) -> Result:
+    """Links two docs by hand, for what `promote` and `handoff new` do not cover (pending items
+    carried to a new doc, a plan that came out of another one). `ref` gets `other` under
+    `<kind>:`; it is one way, the other doc shows it as an incoming link. `remove` takes it
+    out, and also accepts the id prefix of a doc that no longer exists (what `check` reports)."""
+    kind = vocab.LINK_ALIASES.get(kind, kind)
+    if kind not in LINK_KINDS:
+        raise CairnError(f"Unknown link kind: {kind} (one of: {', '.join(LINK_KINDS)})")
+    with store.writer() as w:
+        doc = find(store, ref)
+        mine = [dst for k, dst in doc.links if k == kind]
+        try:
+            dst = find(store, other).id
+        except CairnError:
+            dangling = [x for x in mine if get(store, x) is None and x.startswith(normalize_ref(other))]
+            if not remove or len(dangling) != 1:
+                raise
+            dst = dangling[0]
+        if dst == doc.id:
+            raise CairnError("A doc is not linked to itself.")
+        target = get(store, dst)
+        label = target.name if target else dst[:8]
+        if remove:
+            if dst not in mine:
+                raise CairnError(f"{doc.name} has no `{kind}` link to {label}.")
+            w.emit("unlink", doc.id, {"link_remove": [[kind, dst]]})
+        elif dst not in mine:
+            w.emit("link", doc.id, {"link_add": [[kind, dst]]})
+        else:
+            return Result(doc, [f"[note] {doc.name} already had `{kind}` → {label}."],
+                          {"changed": False, "other": label})
+    return Result(get(store, doc.id), [], {"changed": True, "other": label})
 
 
 # ──────────────────────────────────────────────────────────────── search / weekly
