@@ -1,4 +1,4 @@
-"""`integrate claude-code` contra una config de Claude Code aislada y un `claude` falso."""
+"""`integrate claude-code` against an isolated Claude Code config and a fake `claude`."""
 
 import json
 import stat
@@ -13,7 +13,7 @@ WIP_DOC_HOOK = {"matcher": "startup|clear", "hooks": [
     {"type": "command", "command": "/x/skills/wip-doc/driver.py handoff hook", "timeout": 10}]}
 
 FAKE_CLAUDE = textwrap.dedent("""\
-    # emula `claude mcp add|remove --scope user` sobre $CLAUDE_CONFIG_DIR/.claude.json
+    # emulates `claude mcp add|remove --scope user` on $CLAUDE_CONFIG_DIR/.claude.json
     import json, os, sys
     from pathlib import Path
     path = Path(os.environ["CLAUDE_CONFIG_DIR"]) / ".claude.json"
@@ -63,13 +63,13 @@ def calls(cc) -> list[str]:
 CMD = ["/opt/cairn/bin/cairn"]
 
 
-def test_instala_sin_pisar_lo_ajeno(cc):
+def test_installs_without_touching_other_entries(cc):
     rep = integrate.claude_code(CMD)
     assert len(rep.actions) == 3
     s = settings(cc)
     assert s["model"] == "x"
     start = s["hooks"]["SessionStart"]
-    assert start[0] == WIP_DOC_HOOK                        # wip-doc sigue ahí, primero
+    assert start[0] == WIP_DOC_HOOK                        # wip-doc is still there, first
     assert start[1] == {"matcher": "startup|clear", "hooks": [
         {"type": "command", "command": "/opt/cairn/bin/cairn handoff hook", "timeout": 30}]}
     assert s["hooks"]["SessionEnd"] == [{"hooks": [
@@ -78,7 +78,7 @@ def test_instala_sin_pisar_lo_ajeno(cc):
     assert calls(cc) == ["mcp add --scope user cairn -- /opt/cairn/bin/cairn mcp"]
 
 
-def test_idempotente(cc):
+def test_idempotent(cc):
     integrate.claude_code(CMD)
     before = (cc / "settings.json").read_text()
     rep = integrate.claude_code(CMD)
@@ -87,7 +87,7 @@ def test_idempotente(cc):
     assert len(calls(cc)) == 1
 
 
-def test_cambio_de_comando_reemplaza(cc):
+def test_command_change_replaces(cc):
     integrate.claude_code(CMD)
     rep = integrate.claude_code(["ssh", "vps", "cairn"])
     assert "sacar hook SessionStart: /opt/cairn/bin/cairn handoff hook" in rep.actions
@@ -99,7 +99,7 @@ def test_cambio_de_comando_reemplaza(cc):
                              "mcp add --scope user cairn -- ssh vps cairn mcp"]
 
 
-def test_remove_deja_lo_ajeno(cc):
+def test_remove_keeps_other_entries(cc):
     original = settings(cc)
     integrate.claude_code(CMD)
     rep = integrate.claude_code(CMD, remove=True)
@@ -109,14 +109,14 @@ def test_remove_deja_lo_ajeno(cc):
     assert integrate.claude_code(CMD, remove=True).actions == []
 
 
-def test_remove_borra_grupos_vacios(cc):
+def test_remove_deletes_empty_groups(cc):
     (cc / "settings.json").write_text("{}")
     integrate.claude_code(CMD)
     integrate.claude_code(CMD, remove=True)
     assert settings(cc) == {}
 
 
-def test_dry_run_no_toca_nada(cc):
+def test_dry_run_touches_nothing(cc):
     before = (cc / "settings.json").read_text()
     rep = integrate.claude_code(CMD, dry_run=True)
     assert len(rep.actions) == 3
@@ -124,14 +124,14 @@ def test_dry_run_no_toca_nada(cc):
     assert calls(cc) == []
 
 
-def test_sin_settings(cc):
+def test_without_settings(cc):
     (cc / "settings.json").unlink()
     integrate.claude_code(CMD, mcp=False)
     hook = settings(cc)["hooks"]["SessionStart"][0]["hooks"][0]
     assert hook["command"] == "/opt/cairn/bin/cairn handoff hook"
 
 
-def test_settings_invalido_no_se_toca(cc):
+def test_invalid_settings_is_left_alone(cc):
     (cc / "settings.json").write_text("{roto")
     with pytest.raises(integrate.CairnError, match="no es JSON válido"):
         integrate.claude_code(CMD)
@@ -139,13 +139,13 @@ def test_settings_invalido_no_se_toca(cc):
     assert calls(cc) == []
 
 
-def test_sin_claude(cc, monkeypatch, tmp_path):
+def test_without_claude(cc, monkeypatch, tmp_path):
     monkeypatch.setenv("PATH", str(tmp_path / "vacio"))
     with pytest.raises(integrate.CairnError, match="claude"):
         integrate.claude_code(CMD, hooks=False)
 
 
-def test_reconoce_hooks_de_cairn():
+def test_recognizes_cairn_hooks():
     spec = integrate.HOOKS[0]
     assert integrate._is_cairn_hook("/a/b/cairn handoff hook", spec)
     assert integrate._is_cairn_hook("/usr/bin/python3 -m cairn handoff hook", spec)
@@ -164,8 +164,8 @@ def test_cli(cc, capsys):
     assert "ya estaba" in capsys.readouterr().out
 
 
-def test_replace_wip_doc_saca_su_hook(cc):
-    integrate.claude_code(CMD)                         # convivencia: los dos hooks
+def test_replace_wip_doc_removes_its_hook(cc):
+    integrate.claude_code(CMD)                         # coexistence: both hooks
     rep = integrate.claude_code(CMD, replace_wip_doc=True)
     assert rep.actions == ["sacar hook SessionStart de wip-doc: /x/skills/wip-doc/driver.py handoff hook"]
     hooks = [h["command"] for g in settings(cc)["hooks"]["SessionStart"] for h in g["hooks"]]
@@ -173,7 +173,7 @@ def test_replace_wip_doc_saca_su_hook(cc):
     assert integrate.claude_code(CMD, replace_wip_doc=True).actions == []
 
 
-def test_replace_wip_doc_en_un_paso_y_dry_run(cc):
+def test_replace_wip_doc_in_one_step_and_dry_run(cc):
     before = (cc / "settings.json").read_text()
     rep = integrate.claude_code(CMD, replace_wip_doc=True, dry_run=True)
     assert len(rep.actions) == 4 and (cc / "settings.json").read_text() == before
@@ -182,12 +182,12 @@ def test_replace_wip_doc_en_un_paso_y_dry_run(cc):
     assert [h["command"] for g in start for h in g["hooks"]] == ["/opt/cairn/bin/cairn handoff hook"]
 
 
-def test_replace_wip_doc_no_va_con_remove(cc):
+def test_replace_wip_doc_not_with_remove(cc):
     with pytest.raises(integrate.CairnError, match="replace-wip-doc"):
         integrate.claude_code(CMD, remove=True, replace_wip_doc=True)
 
 
-def test_reconoce_el_hook_de_wip_doc():
+def test_recognizes_the_wip_doc_hook():
     assert integrate._is_wip_doc_hook("/home/p/.claude/skills/wip-doc/driver.py handoff hook")
     assert integrate._is_wip_doc_hook("python3 /x/wip-doc/driver.py handoff hook")
     assert not integrate._is_wip_doc_hook("/x/wip-doc/driver.py handoff list")
@@ -195,9 +195,9 @@ def test_reconoce_el_hook_de_wip_doc():
     assert not integrate._is_wip_doc_hook("/opt/cairn/bin/cairn handoff hook")
 
 
-# ──────────────────────────────────────────────────────────────── timer de systemd
+# ──────────────────────────────────────────────────────────────── systemd timer
 
-def test_systemd_instala_es_idempotente_y_se_saca(tmp_path, monkeypatch):
+def test_systemd_installs_is_idempotent_and_removes(tmp_path, monkeypatch):
     monkeypatch.setenv("CAIRN_SYSTEMD_DIR", str(tmp_path / "units"))
     calls = []
     monkeypatch.setattr(integrate, "_systemctl", lambda *a: calls.append(a))
@@ -211,14 +211,14 @@ def test_systemd_instala_es_idempotente_y_se_saca(tmp_path, monkeypatch):
     assert rep.actions[-1] == "activar cairn-sync.timer (cada 15 min)"
 
     calls.clear()
-    rep = integrate.systemd(cmd, interval=15)                # de nuevo: nada que hacer
+    rep = integrate.systemd(cmd, interval=15)                # again: nothing to do
     assert not rep.actions and len(rep.unchanged) == 2 and not calls
 
-    integrate.systemd(cmd, interval=10, dry_run=True)        # dry-run: no toca nada
+    integrate.systemd(cmd, interval=10, dry_run=True)        # dry-run: touches nothing
     assert "OnUnitActiveSec=15min" in (tmp_path / "units" / "cairn-sync.timer").read_text()
     assert not calls
 
-    integrate.systemd(cmd, interval=10)                      # otro intervalo: reescribe el timer
+    integrate.systemd(cmd, interval=10)                      # another interval: rewrites the timer
     assert "OnUnitActiveSec=10min" in (tmp_path / "units" / "cairn-sync.timer").read_text()
 
     calls.clear()

@@ -1,25 +1,25 @@
-"""Reloj de cairn: un solo lugar para "ahora", fijable por variable de entorno en los tests."""
+"""cairn's clock: a single place for "now", which tests can pin through an environment variable."""
 
 import os
 from datetime import UTC, datetime
 
 
 def now() -> datetime:
-    """Ahora, con zona horaria. `CAIRN_NOW` (ISO 8601) lo fija; sin zona se toma como UTC."""
-    fijo = os.environ.get("CAIRN_NOW")
-    if fijo:
-        dt = datetime.fromisoformat(fijo)
+    """Now, timezone-aware. `CAIRN_NOW` (ISO 8601) pins it; without a timezone it is taken as UTC."""
+    fixed = os.environ.get("CAIRN_NOW")
+    if fixed:
+        dt = datetime.fromisoformat(fixed)
         return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     return datetime.now(UTC)
 
 
 def timestamp() -> str:
-    """Marca de tiempo de un evento: UTC, ISO 8601 con microsegundos (ordena como texto)."""
+    """An event's timestamp: UTC, ISO 8601 with microseconds (sorts as text)."""
     return now().astimezone(UTC).isoformat(timespec="microseconds")
 
 
 def today() -> str:
-    """La fecha local de hoy (`YYYY-MM-DD`), la que se estampa en los docs."""
+    """Today's local date (`YYYY-MM-DD`), the one stamped on docs."""
     if os.environ.get("CAIRN_NOW"):
         return now().date().isoformat()
     return datetime.now(UTC).astimezone().date().isoformat()

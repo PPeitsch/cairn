@@ -1,8 +1,8 @@
-"""Sync entre nodos aislados: cada uno con su config, datos y clave en un temporal.
+"""Sync between isolated nodes: each with its own config, data and key in a temp dir.
 
-El servidor corre en un hilo y los dos lados hablan por pipes del sistema operativo, igual que
-por ssh. Al final, una prueba con procesos de verdad: `cairn sync` lanza un "ssh" falso
-(`CAIRN_SSH`) que corre `cairn sync-peer --stdio --as <nodo>` con la config del otro nodo.
+The server runs in a thread and both sides talk over OS pipes, just as over ssh. At the end, a
+test with real processes: `cairn sync` launches a fake "ssh" (`CAIRN_SSH`) that runs
+`cairn sync-peer --stdio --as <node>` with the other node's config.
 """
 
 import json
@@ -73,7 +73,7 @@ def nodes(tmp_path, monkeypatch):
 
 @pytest.fixture
 def pair(nodes):
-    """laptop y vps, que se conocen; laptop se conecta al vps."""
+    """laptop and vps, which know each other; laptop connects to the vps."""
     laptop, vps = nodes("laptop"), nodes("vps")
     vps.trust(laptop, ssh=True)
     laptop.trust(vps)
@@ -81,7 +81,7 @@ def pair(nodes):
 
 
 def run_sync(cli_node, srv_node, as_node=None):
-    """Una sesión de sync: devuelve (resultado del cliente, resultado del servidor)."""
+    """One sync session: returns (client result, server result)."""
     c2s_r, c2s_w = os.pipe()
     s2c_r, s2c_w = os.pipe()
     srv_cfg = (srv_node.use(), config.load())[1]
@@ -105,7 +105,7 @@ def run_sync(cli_node, srv_node, as_node=None):
     return out["cli"], out.get("srv")
 
 
-def test_intercambio_en_los_dos_sentidos(pair):
+def test_exchange_in_both_directions(pair):
     laptop, vps = pair
     laptop.new("demo", "desde_laptop")
     vps.new("demo", "desde_vps")
@@ -113,11 +113,11 @@ def test_intercambio_en_los_dos_sentidos(pair):
     assert res.ok and srv.ok, (res.errors, srv.errors)
     assert (res.sent, res.received) == (1, 1)
     assert laptop.names() == vps.names() == {"2026-03-10_demo_desde_laptop", "2026-03-10_demo_desde_vps"}
-    res, _ = run_sync(laptop, vps)                    # ya están iguales: no viaja nada
+    res, _ = run_sync(laptop, vps)                    # already equal: nothing travels
     assert (res.sent, res.received) == (0, 0)
 
 
-def test_la_cadena_sigue_entre_nodos(pair):
+def test_the_chain_continues_across_nodes(pair):
     laptop, vps = pair
     doc = laptop.new("demo", "plan")
     run_sync(laptop, vps)
@@ -130,30 +130,30 @@ def test_la_cadena_sigue_entre_nodos(pair):
         assert not docs.find(s, doc.name).divergent
 
 
-def test_divergencia_entre_nodos_queda_igual_en_los_dos(pair):
+def test_divergence_between_nodes_is_the_same_on_both(pair):
     laptop, vps = pair
     doc = laptop.new("demo", "plan")
     run_sync(laptop, vps)
     with laptop.store() as s:
         edit.apply(s, doc.name, body="# laptop\n")
     with vps.store() as s:
-        vps.mp.setenv("CAIRN_NOW", "2026-03-10T13:00:00+00:00")   # el del vps es posterior
+        vps.mp.setenv("CAIRN_NOW", "2026-03-10T13:00:00+00:00")   # the vps one is later
         edit.apply(s, doc.name, body="# vps\n")
     run_sync(laptop, vps)
     for n in (laptop, vps):
         with n.store() as s:
             d = docs.find(s, doc.name)
-            assert d.divergent and d.body == "# laptop\n"     # gana la rama más vieja
+            assert d.divergent and d.body == "# laptop\n"     # the oldest branch wins
 
 
-def test_relay_y_nodos_desconocidos(pair, nodes):
+def test_relay_and_unknown_nodes(pair, nodes):
     laptop, vps = pair
     aws = nodes("aws")
     vps.trust(aws, ssh=True)
     aws.trust(vps)
     aws.new("demo", "desde_aws")
     assert run_sync(aws, vps)[0].ok
-    res, _ = run_sync(laptop, vps)                    # laptop no conoce a aws
+    res, _ = run_sync(laptop, vps)                    # laptop does not know aws
     assert not res.ok and any("aws" in e and "no está autorizado" in e for e in res.errors)
     assert "2026-03-10_demo_desde_aws" not in laptop.names()
     laptop.trust(aws)
@@ -161,7 +161,7 @@ def test_relay_y_nodos_desconocidos(pair, nodes):
     assert res.ok and "2026-03-10_demo_desde_aws" in laptop.names()
 
 
-def test_cliente_no_autorizado(pair, nodes):
+def test_unauthorized_client(pair, nodes):
     _, vps = pair
     intruso = nodes("intruso")
     intruso.trust(vps)
@@ -170,7 +170,7 @@ def test_cliente_no_autorizado(pair, nodes):
     assert not srv.ok
 
 
-def test_identidad_fijada_por_authorized_keys(pair):
+def test_identity_pinned_by_authorized_keys(pair):
     laptop, vps = pair
     res, _ = run_sync(laptop, vps, as_node="otro")
     assert isinstance(res, ProtocolError) and "la clave es de otro" in str(res)
@@ -178,11 +178,11 @@ def test_identidad_fijada_por_authorized_keys(pair):
     assert res.ok
 
 
-def test_nadie_escribe_el_log_de_otro_nodo(pair):
+def test_nobody_writes_another_nodes_log(pair):
     laptop, vps = pair
     laptop.new("demo", "x")
     run_sync(laptop, vps)
-    # un vps comprometido agrega un evento al log de laptop (firmado con su propia clave)
+    # a compromised vps adds an event to laptop's log (signed with its own key)
     with vps.store() as s:
         seg = s.config.logs_dir / "laptop" / "000001.jsonl"
         ev = json.loads(seg.read_text().splitlines()[0])
@@ -190,9 +190,9 @@ def test_nadie_escribe_el_log_de_otro_nodo(pair):
     with open(seg, "a") as f:
         f.write(json.dumps(ev) + "\n")
     res, _ = run_sync(laptop, vps)
-    assert res.ok and res.received == 0               # el servidor no le manda a nadie su propio log
+    assert res.ok and res.received == 0               # the server never sends anyone their own log
     assert "inyectado" not in laptop.names()
-    # y si un servidor malicioso lo mandara igual, el receptor lo rechaza
+    # and if a malicious server sent it anyway, the receiver rejects it
     import base64
 
     from cairn.sync import receive
@@ -204,13 +204,13 @@ def test_nadie_escribe_el_log_de_otro_nodo(pair):
     assert "inyectado" not in laptop.names()
 
 
-def test_evento_falsificado_se_rechaza(pair, nodes):
+def test_forged_event_is_rejected(pair, nodes):
     laptop, vps = pair
     aws = nodes("aws")
     for n in (laptop, vps):
         n.trust(aws)
     aws.new("demo", "legitimo")
-    # el vps fabrica un log de aws con un evento firmado con otra clave
+    # the vps forges an aws log with an event signed with another key
     with aws.store() as s:
         line = (s.config.logs_dir / "aws" / "000001.jsonl").read_text()
     falso = nodes("falso")
@@ -229,7 +229,7 @@ def test_evento_falsificado_se_rechaza(pair, nodes):
     assert "2026-03-10_demo_legitimo" not in laptop.names()
 
 
-def test_revocado(pair):
+def test_revoked(pair):
     laptop, vps = pair
     vps.use()
     access.revoke("laptop")
@@ -237,7 +237,7 @@ def test_revocado(pair):
     assert isinstance(res, ProtocolError) and "no está autorizado en vps" in str(res)
 
 
-def test_copias_que_no_son_prefijo(pair):
+def test_copies_that_are_not_a_prefix(pair):
     laptop, vps = pair
     laptop.new("demo", "x")
     run_sync(laptop, vps)
@@ -250,7 +250,7 @@ def test_copias_que_no_son_prefijo(pair):
     assert any("no es un prefijo" in e for e in res.errors)
 
 
-def test_linea_rota_en_el_origen_se_copia_sin_proyectar(pair):
+def test_broken_line_at_origin_is_copied_not_projected(pair):
     laptop, vps = pair
     laptop.new("demo", "x")
     with open(laptop.root / "data" / "logs" / "laptop" / "000001.jsonl", "ab") as f:
@@ -263,12 +263,12 @@ def test_linea_rota_en_el_origen_se_copia_sin_proyectar(pair):
 
 # ──────────────────────────────────────────────────────────────── authorized_keys
 
-def test_authorize_y_revoke_en_authorized_keys(nodes):
+def test_authorize_and_revoke_in_authorized_keys(nodes):
     laptop, vps = nodes("laptop"), nodes("vps")
     ak = vps.root / "authorized_keys"
     ak.write_text("ssh-ed25519 AAAAotra usuario@maquina\n")
     vps.trust(laptop, ssh=True)
-    vps.trust(laptop, ssh=True)                       # idempotente
+    vps.trust(laptop, ssh=True)                       # idempotent
     lines = ak.read_text().splitlines()
     assert lines[0] == "ssh-ed25519 AAAAotra usuario@maquina"
     assert len(lines) == 2
@@ -281,7 +281,7 @@ def test_authorize_y_revoke_en_authorized_keys(nodes):
     assert config.load().peers["laptop"].revoked == "2026-03-10"
 
 
-def test_authorize_otra_clave_para_el_mismo_nodo(nodes):
+def test_authorize_another_key_for_the_same_node(nodes):
     laptop, vps, otro = nodes("laptop"), nodes("vps"), nodes("otro")
     vps.trust(laptop)
     vps.use()
@@ -291,7 +291,7 @@ def test_authorize_otra_clave_para_el_mismo_nodo(nodes):
         access.authorize("vps", otro.pub)
 
 
-def test_remotos(nodes):
+def test_remotes(nodes):
     nodes("laptop")
     access.remote_add("vps", "ssh://cairn@host:2222")
     assert config.load().remotes["vps"].url == "ssh://cairn@host:2222"
@@ -301,17 +301,17 @@ def test_remotos(nodes):
     assert config.load().remotes == {}
 
 
-# ──────────────────────────────────────────────────────────────── procesos de verdad
+# ──────────────────────────────────────────────────────────────── real processes
 
 FAKE_SSH = """\
 import os, sys
-# como ssh con la clave restringida: ignora lo que pide el cliente y corre el comando forzado
+# like ssh with the restricted key: ignores what the client asks and runs the forced command
 env = dict(os.environ, **{k[len("PEER_"):]: v for k, v in os.environ.items() if k.startswith("PEER_")})
 os.execvpe(sys.executable, [sys.executable, "-m", "cairn", "sync-peer", "--stdio", "--as", "laptop"], env)
 """
 
 
-def test_cli_sync_por_ssh_falso(pair, tmp_path, monkeypatch, capsys):
+def test_cli_sync_over_fake_ssh(pair, tmp_path, monkeypatch, capsys):
     laptop, vps = pair
     fake = tmp_path / "fake_ssh.py"
     fake.write_text(FAKE_SSH)
@@ -345,7 +345,7 @@ def _divergir(laptop, vps):
     return doc.name
 
 
-def test_resolve_quedarse_con_la_rama(pair, capsys):
+def test_resolve_keep_the_branch(pair, capsys):
     from cairn import history
     laptop, vps = pair
     name = _divergir(laptop, vps)
@@ -367,7 +367,7 @@ def test_resolve_quedarse_con_la_rama(pair, capsys):
             assert docs.check(s) == []
 
 
-def test_resolve_quedarse_con_la_principal(pair):
+def test_resolve_keep_the_main_chain(pair):
     from cairn import history
     laptop, vps = pair
     name = _divergir(laptop, vps)
@@ -379,7 +379,7 @@ def test_resolve_quedarse_con_la_principal(pair):
             history.resolve(s, name, "main")
 
 
-def test_resolve_hash_que_no_es_rama(pair):
+def test_resolve_hash_that_is_not_a_branch(pair):
     from cairn import history
     laptop, vps = pair
     name = _divergir(laptop, vps)
@@ -387,14 +387,14 @@ def test_resolve_hash_que_no_es_rama(pair):
         history.resolve(s, name, "0000")
 
 
-# ──────────────────────────────────────────────────────────────── cambio de clave y restore
+# ──────────────────────────────────────────────────────────────── key change and restore
 
 def at(node, when):
     node.now = when
     return node.use()
 
 
-def test_rotate_y_replace_mantienen_lo_viejo(pair, capsys):
+def test_rotate_and_replace_keep_the_old(pair, capsys):
     laptop, vps = pair
     doc = laptop.new("demo", "antes")
     run_sync(laptop, vps)
@@ -402,12 +402,12 @@ def test_rotate_y_replace_mantienen_lo_viejo(pair, capsys):
         old_priv = s.key
         out = access.rotate_key(s)
         assert "--replace" in out[-1]
-        assert docs.check(s) == []                    # lo propio de antes sigue verificando
+        assert docs.check(s) == []                    # the node's own earlier events still verify
     with laptop.store() as s:
         assert s.rebuild() == 1 and docs.check(s) == [] and len(s.config.old_keys) == 1
         new_pub = s.public_line()
     at(laptop, "2026-03-11T12:00:00+00:00").new("demo", "despues")
-    res, _ = run_sync(laptop, vps)                    # el vps todavía no conoce la clave nueva
+    res, _ = run_sync(laptop, vps)                    # the vps does not know the new key yet
     assert any("firma inválida" in e for e in res.errors)
 
     at(vps, "2026-03-11T10:00:00+00:00")
@@ -423,7 +423,7 @@ def test_rotate_y_replace_mantienen_lo_viejo(pair, capsys):
     with vps.store() as s:
         assert s.rebuild() == 2 and docs.check(s) == []
 
-    # con la clave vieja no se puede firmar nada posterior al cambio
+    # the old key cannot sign anything after the change
     from cairn import keys
     from cairn.events import Event
     with vps.store() as s:
@@ -437,7 +437,7 @@ def test_rotate_y_replace_mantienen_lo_viejo(pair, capsys):
         assert s.verifier.problem(viejo) is None
 
 
-def test_reautorizar_un_revocado_conserva_lo_anterior(pair):
+def test_reauthorizing_a_revoked_node_keeps_the_old(pair):
     laptop, vps = pair
     laptop.new("demo", "antes")
     run_sync(laptop, vps)
@@ -451,7 +451,7 @@ def test_reautorizar_un_revocado_conserva_lo_anterior(pair):
         assert s.rebuild() == 1 and docs.check(s) == []
 
 
-def test_peers_muestra_las_claves_anteriores(pair, capsys):
+def test_peers_shows_previous_keys(pair, capsys):
     laptop, vps = pair
     with laptop.store() as s:
         access.rotate_key(s)
@@ -464,30 +464,30 @@ def test_peers_muestra_las_claves_anteriores(pair, capsys):
 
 
 def wipe(node):
-    """El nodo pierde sus datos (log, base y clave) y conserva sólo la config."""
+    """The node loses its data (log, database and key) and keeps only the config."""
     import shutil
     shutil.rmtree(node.root / "data")
     with node.store() as s:
         node.pub = s.public_line()
 
 
-def test_restore_de_un_nodo_que_perdio_sus_datos(pair):
+def test_restore_of_a_node_that_lost_its_data(pair):
     laptop, vps = pair
     a = laptop.new("demo", "uno")
     with laptop.store() as s:
         edit.apply(s, a.name, body="# editado\n")
     vps.new("demo", "del_vps")
     run_sync(laptop, vps)
-    huella = keys.fingerprint(laptop.pub)            # la que se anotó fuera de la laptop
+    huella = keys.fingerprint(laptop.pub)            # the one noted down outside the laptop
     wipe(laptop)
     assert laptop.names() == set()
 
-    # sin el replace en el vps, el restore no arranca
+    # without the replace on the vps, the restore does not start
     res, _ = run_sync_restore(laptop, vps, old_keys=[huella])
     assert isinstance(res, ProtocolError) and "--replace" in str(res)
     vps.use()
     access.authorize("laptop", laptop.pub, ssh=True, command=["/opt/cairn"], replace=True)
-    # sin la huella anotada tampoco: el vps dice cuál era la clave, pero no se le cree a ciegas
+    # nor without the noted fingerprint: the vps says which key it was, but it is not believed blindly
     res, _ = run_sync_restore(laptop, vps)
     assert isinstance(res, ProtocolError) and "--old-key" in str(res) and huella in str(res)
     with laptop.store() as s:
@@ -498,7 +498,7 @@ def test_restore_de_un_nodo_que_perdio_sus_datos(pair):
     assert laptop.body(a.name) == "# editado\n"
     with laptop.store() as s:
         assert len(s.config.old_keys) == 1 and docs.check(s) == []
-    # la cadena propia sigue: lo nuevo engancha con lo restaurado y el vps lo acepta
+    # the own chain continues: new events attach to the restored ones and the vps accepts them
     with laptop.store() as s:
         edit.apply(s, a.name, body="# después del restore\n")
     res, _ = run_sync(laptop, vps)
@@ -506,12 +506,12 @@ def test_restore_de_un_nodo_que_perdio_sus_datos(pair):
     assert vps.body(a.name) == "# después del restore\n"
     with vps.store() as s:
         assert docs.check(s) == []
-    # un segundo restore ya no corresponde
+    # a second restore no longer applies
     res, _ = run_sync_restore(laptop, vps, old_keys=[huella])
     assert isinstance(res, ProtocolError) and "ya tiene eventos propios" in str(res)
 
 
-def test_sin_restore_el_log_propio_no_se_acepta(pair):
+def test_without_restore_the_own_log_is_rejected(pair):
     laptop, vps = pair
     laptop.new("demo", "uno")
     run_sync(laptop, vps)
@@ -519,7 +519,7 @@ def test_sin_restore_el_log_propio_no_se_acepta(pair):
     vps.use()
     access.authorize("laptop", laptop.pub, ssh=True, command=["/opt/cairn"], replace=True)
     res, _ = run_sync(laptop, vps)
-    assert res.ok and laptop.names() == set()        # el vps no le manda su propio log
+    assert res.ok and laptop.names() == set()        # the vps does not send it its own log
 
 
 def run_sync_restore(cli_node, srv_node, **opts):
@@ -533,7 +533,7 @@ def run_sync_restore(cli_node, srv_node, **opts):
         try:
             with Store(srv_cfg) as s, open(c2s_r, "rb") as r, open(s2c_w, "wb") as w:
                 out["srv"] = serve(s, Channel(r, w))
-        except (ProtocolError, OSError) as e:          # el cliente no llegó a hablar
+        except (ProtocolError, OSError) as e:          # the client never got to talk
             out["srv"] = e
 
     t = threading.Thread(target=server)
@@ -550,7 +550,7 @@ def run_sync_restore(cli_node, srv_node, **opts):
     return out["cli"], out.get("srv")
 
 
-def test_cli_restore_y_rotate(pair, capsys):
+def test_cli_restore_and_rotate(pair, capsys):
     laptop, vps = pair
     laptop.use()
     access.remote_add("vps", "ssh://cairn@host")
@@ -571,8 +571,8 @@ def test_cli_restore_y_rotate(pair, capsys):
 
 
 def _perdio_y_se_reautorizo(pair):
-    """La laptop escribió, sincronizó y perdió sus datos; el vps ya aceptó su clave nueva.
-    Devuelve el nombre del doc y la huella de la clave perdida."""
+    """The laptop wrote, synced and lost its data; the vps already accepted its new key.
+    Returns the doc name and the fingerprint of the lost key."""
     laptop, vps = pair
     a = laptop.new("demo", "uno")
     run_sync(laptop, vps)
@@ -589,23 +589,23 @@ def _sin_restaurar(laptop):
     assert laptop.names() == set()
 
 
-def test_restore_corta_si_el_par_manda_una_clave_vieja_que_no_es(pair):
+def test_restore_stops_if_the_peer_sends_a_wrong_old_key(pair):
     laptop, vps = pair
     _, huella = _perdio_y_se_reautorizo(pair)
-    # el vps comprometido: dice que la clave vieja de la laptop es otra, que controla él
+    # the compromised vps claims the laptop's old key is another one, which it controls
     falsa = Node("atacante", vps.root.parent, vps.mp).pub
     vps.use()
     config.update(lambda raw: raw["peers"]["laptop"]["old"]["1"].update({"key": falsa}))
     res, _ = run_sync_restore(laptop, vps, old_keys=[huella])
     assert isinstance(res, ProtocolError) and f"no tiene registrada la clave anterior {huella}" in str(res)
     _sin_restaurar(laptop)
-    # sin huellas, avisa cuál dice el vps (la falsa) y tampoco restaura
+    # without fingerprints, it reports which one the vps claims (the fake) and does not restore either
     res, _ = run_sync_restore(laptop, vps)
     assert isinstance(res, ProtocolError) and keys.fingerprint(falsa) in str(res)
     _sin_restaurar(laptop)
 
 
-def test_restore_con_una_huella_de_mas_o_mal_anotada(pair):
+def test_restore_with_an_extra_or_mistyped_fingerprint(pair):
     laptop, vps = pair
     _, huella = _perdio_y_se_reautorizo(pair)
     otra = keys.fingerprint(Node("otro", vps.root.parent, vps.mp).pub)
@@ -614,7 +614,7 @@ def test_restore_con_una_huella_de_mas_o_mal_anotada(pair):
     _sin_restaurar(laptop)
 
 
-def test_restore_confiando_en_el_par(pair):
+def test_restore_trusting_the_peer(pair):
     laptop, vps = pair
     name, _ = _perdio_y_se_reautorizo(pair)
     res, srv = run_sync_restore(laptop, vps, trust_peer_keys=True)
@@ -622,13 +622,13 @@ def test_restore_confiando_en_el_par(pair):
     assert name in laptop.names()
 
 
-def test_restore_con_la_misma_clave_no_pide_huellas(pair):
+def test_restore_with_the_same_key_needs_no_fingerprints(pair):
     import shutil
     laptop, vps = pair
     a = laptop.new("demo", "uno")
     run_sync(laptop, vps)
     data = laptop.root / "data"
-    shutil.copy(data / "node_key", laptop.root / "backup_key")      # backup de la privada
+    shutil.copy(data / "node_key", laptop.root / "backup_key")      # backup of the private key
     wipe(laptop)
     (data / "node_key").unlink()
     (data / "node_key.pub").unlink()
@@ -638,12 +638,12 @@ def test_restore_con_la_misma_clave_no_pide_huellas(pair):
     assert a.name in laptop.names()
 
 
-def test_cli_huella_y_opciones_del_restore(pair, capsys):
+def test_cli_fingerprint_and_restore_options(pair, capsys):
     laptop, vps = pair
     laptop.use()
     assert cli.main(["key"]) == 0
     cap = capsys.readouterr()
-    assert cap.out.strip() == laptop.pub                            # sola, para `"$(cairn key)"`
+    assert cap.out.strip() == laptop.pub                            # alone, for `"$(cairn key)"`
     assert keys.fingerprint(laptop.pub) in cap.err and "--old-key" in cap.err
     assert cli.main(["key", "--fingerprint"]) == 0
     assert capsys.readouterr().out.strip() == keys.fingerprint(laptop.pub)
@@ -663,22 +663,22 @@ def test_cli_huella_y_opciones_del_restore(pair, capsys):
     assert keys.fingerprint(laptop.pub) in out and "anterior" in out
 
 
-# ──────────────────────────────────────────────────────────────── disparo automático
+# ──────────────────────────────────────────────────────────────── automatic trigger
 
-def test_toda_escritura_dispara_el_sync_y_la_lectura_no(pair, monkeypatch):
+def test_every_write_triggers_sync_and_reads_do_not(pair, monkeypatch):
     from cairn import sync
     laptop, _ = pair
     calls = []
     monkeypatch.setattr(sync, "trigger", lambda cfg, delay=None: calls.append(delay))
     doc = laptop.new("demo", "plan")
     with laptop.store() as s:
-        edit.apply(s, doc.name, body="# editado\n")      # antes, editar no disparaba
+        edit.apply(s, doc.name, body="# editado\n")      # editing used to not trigger it
         docs.find(s, doc.name)
         docs.all_docs(s)
     assert calls == [None, None]
 
 
-def test_el_debounce_no_lanza_otro_si_ya_hay_uno_esperando(pair, monkeypatch):
+def test_debounce_does_not_launch_another_if_one_is_waiting(pair, monkeypatch):
     from cairn import sync
     laptop, _ = pair
     laptop.use()
@@ -689,30 +689,30 @@ def test_el_debounce_no_lanza_otro_si_ya_hay_uno_esperando(pair, monkeypatch):
     monkeypatch.setattr(sync.subprocess, "Popen", lambda argv, **kw: launched.append(argv))
     assert sync.trigger(cfg)
     assert launched[-1][-4:] == ["sync", "--quiet", "--after", "5"]
-    with sync._flock(sync._wait_path(cfg), blocking=False) as got:   # alguien esperando
+    with sync._flock(sync._wait_path(cfg), blocking=False) as got:   # someone waiting
         assert got
         assert not sync.trigger(cfg)
         assert not sync.wait_turn(cfg, 0.01)
-        assert sync.trigger(cfg, delay=0)                  # el del hook no espera
+        assert sync.trigger(cfg, delay=0)                  # the hook's does not wait
     assert launched[-1][-2:] == ["sync", "--quiet"] and len(launched) == 2
     assert sync.wait_turn(cfg, 0.01)
 
 
-def test_sin_remotos_o_con_auto_apagado_no_dispara(pair, monkeypatch):
+def test_no_remotes_or_auto_off_does_not_trigger(pair, monkeypatch):
     from cairn import sync
     laptop, _ = pair
     laptop.use()
     monkeypatch.delenv("CAIRN_NO_AUTOSYNC")
     monkeypatch.setattr(sync.subprocess, "Popen", lambda *a, **kw: pytest.fail("no debía lanzar"))
-    assert not sync.trigger(config.load())                 # sin remotos
+    assert not sync.trigger(config.load())                 # no remotes
     access.remote_add("vps", "ssh://cairn@vps.example")
     config.update(lambda raw: raw.setdefault("sync", {}).update({"auto": "false"}))
     assert not sync.trigger(config.load())
 
 
-def test_una_edicion_llega_sola_al_remoto(pair, tmp_path, monkeypatch):
-    """De punta a punta, con procesos de verdad: editar en laptop lanza `cairn sync --after`,
-    que espera el debounce y empuja por el ssh falso."""
+def test_an_edit_reaches_the_remote_on_its_own(pair, tmp_path, monkeypatch):
+    """End to end, with real processes: editing on the laptop launches `cairn sync --after`,
+    which waits for the debounce and pushes through the fake ssh."""
     import time
 
     from cairn import integrate
@@ -723,12 +723,12 @@ def test_una_edicion_llega_sola_al_remoto(pair, tmp_path, monkeypatch):
         monkeypatch.setenv(f"PEER_{k}", v)
     monkeypatch.setenv("CAIRN_SSH", f"{sys.executable} {fake}")
     monkeypatch.setattr(integrate, "default_command", lambda: [sys.executable, "-m", "cairn"])
-    doc = laptop.new("demo", "sesion_larga")               # todavía sin remoto: no viaja
+    doc = laptop.new("demo", "sesion_larga")               # no remote yet: it does not travel
     laptop.use()
     access.remote_add("vps", "ssh://cairn@vps.example")
     config.update(lambda raw: raw.setdefault("sync", {}).update({"debounce": "0.3"}))
     monkeypatch.delenv("CAIRN_NO_AUTOSYNC")
-    for i in range(3):                                      # una ráfaga de ediciones
+    for i in range(3):                                      # a burst of edits
         with laptop.store() as s:
             edit.apply(s, doc.name, body=f"# edición {i}\n")
     deadline = time.monotonic() + 30

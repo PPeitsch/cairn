@@ -1,20 +1,21 @@
-"""Quién puede sincronizar con este nodo y con quién sincroniza este nodo.
+"""Who may sync with this node, and which nodes this node syncs with.
 
-- `authorize <nodo> <clave>`: confía en la clave del nodo (sus eventos se aceptan) y, salvo
-  `--no-ssh`, le da acceso por ssh en `authorized_keys`, restringido a un único comando:
+- `authorize <node> <key>`: trusts the node's key (its events are accepted) and, unless
+  `--no-ssh`, gives it ssh access in `authorized_keys`, restricted to a single command:
 
-      command="<cairn> sync-peer --stdio --as <nodo>",restrict ssh-ed25519 AAAA… cairn:<nodo>
+      command="<cairn> sync-peer --stdio --as <node>",restrict ssh-ed25519 AAAA… cairn:<node>
 
-  `restrict` saca pty, forwarding y todo lo demás; `--as` fija la identidad del que entra, así
-  no puede hacerse pasar por otro nodo. Un nodo que nunca se conecta acá (sus eventos llegan a
-  través de otro) se autoriza con `--no-ssh`: sólo la confianza en su clave.
-- `authorize --replace`: el nodo cambió de clave; la anterior queda en `[peers.<nodo>.old]` y
-  verifica sólo lo firmado antes del cambio. `key --rotate` es el cambio del lado del nodo.
-- `revoke <nodo>`: le saca el acceso por ssh y deja de aceptar eventos nuevos suyos (los que ya
-  están siguen valiendo: se verifican con la clave, que queda marcada como revocada).
-- `remote add|remove`: los nodos con los que este sincroniza (`cairn sync`).
+  `restrict` removes pty, forwarding and everything else; `--as` pins the identity of whoever
+  connects, so it cannot pose as another node. A node that never connects here (its events
+  arrive through another one) is authorized with `--no-ssh`: only trust in its key.
+- `authorize --replace`: the node changed its key; the previous one goes to
+  `[peers.<node>.old]` and verifies only what was signed before the change. `key --rotate` is
+  the change on the node's side.
+- `revoke <node>`: removes its ssh access and stops accepting new events from it (those already
+  here remain valid: they are verified with the key, which is marked as revoked).
+- `remote add|remove`: the nodes this one syncs with (`cairn sync`).
 
-`CAIRN_AUTHORIZED_KEYS` cambia la ruta de `~/.ssh/authorized_keys` (para los tests).
+`CAIRN_AUTHORIZED_KEYS` changes the path of `~/.ssh/authorized_keys` (for the tests).
 """
 
 from __future__ import annotations
@@ -55,8 +56,8 @@ def _is_cairn_line(line: str, node: str | None = None) -> bool:
 
 
 def _rewrite_authorized_keys(fn) -> bool:
-    """Reescribe `authorized_keys` (atómico, 0600, carpeta 0700) con `fn(líneas) -> líneas`.
-    True si cambió."""
+    """Rewrites `authorized_keys` (atomically, 0600, folder 0700) with `fn(lines) -> lines`.
+    True if it changed."""
     path = authorized_keys_path()
     old = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     new = fn(list(old))
@@ -85,9 +86,9 @@ def _check_node(node: str, own: str) -> None:
 
 def authorize(node: str, pub: str, ssh: bool = True, command: list[str] | None = None,
               replace: bool = False) -> list[str]:
-    """Devuelve lo que hizo. Si el nodo ya tenía otra clave, `replace` la pasa a sus claves
-    anteriores: sigue verificando lo que firmó hasta ahora y nada posterior. Si estaba revocado,
-    la vieja queda igual, pero sólo para lo anterior a la revocación."""
+    """Returns what it did. If the node already had another key, `replace` moves it to its
+    previous keys: it keeps verifying what it signed up to now and nothing later. If the node
+    was revoked, the old key is kept too, but only for what predates the revocation."""
     cfg = config.load()
     _check_node(node, cfg.node)
     try:
@@ -102,7 +103,7 @@ def authorize(node: str, pub: str, ssh: bool = True, command: list[str] | None =
             raise CairnError(f"{node} ya está autorizado con otra clave. Si la cambió (`cairn key "
                              f"--rotate`, o se reinstaló), `cairn authorize {node} <clave> --replace`: "
                              "la anterior sigue verificando lo que ya firmó.")
-        # revocado: `revoked` es una fecha; vale lo firmado hasta el final de ese día
+        # revoked: `revoked` is a date; what was signed until the end of that day is valid
         until = f"{prev.revoked}T23:59:59.999999+00:00" if prev.revoked else clock.timestamp()
         old.append(config.OldKey(prev.key, until))
         done.append(f"la clave anterior de {node} verifica sólo lo de antes de {until[:19]}")
@@ -131,14 +132,14 @@ def authorize(node: str, pub: str, ssh: bool = True, command: list[str] | None =
 
 
 def rotate_key(store) -> list[str]:
-    """Cambia la clave de este nodo (la de firmar y la de ssh). La anterior pasa a
-    `[node.old]`: lo ya firmado con ella sigue valiendo acá. Los pares tienen que aceptar la
-    nueva con `authorize <nodo> <clave> --replace`; hasta entonces rechazan lo que firme."""
+    """Changes this node's key (both the signing one and the ssh one). The previous one moves to
+    `[node.old]`: what was already signed with it stays valid here. Peers have to accept the new
+    one with `authorize <node> <key> --replace`; until then they reject what it signs."""
     cfg = store.config
     old_line = store.public_line()
     until = clock.timestamp()
     path = cfg.key_path
-    tmp = path.with_name("new_" + path.name)       # su .pub: new_node_key.pub
+    tmp = path.with_name("new_" + path.name)       # its .pub: new_node_key.pub
     tmp.unlink(missing_ok=True)
     tmp.with_suffix(".pub").unlink(missing_ok=True)
     with store._lock():
@@ -183,10 +184,10 @@ def ssh_authorized_nodes() -> list[str]:
                    if _is_cairn_line(ln) and (m := _MARK_RE.search(ln))})
 
 
-# ──────────────────────────────────────────────────────────────── remotos
+# ──────────────────────────────────────────────────────────────── remotes
 
 def parse_url(url: str) -> tuple[str, str | None]:
-    """`ssh://[usuario@]host[:puerto]` → (destino para ssh, puerto)."""
+    """`ssh://[user@]host[:port]` → (ssh destination, port)."""
     u = urlsplit(url)
     if u.scheme != "ssh" or not u.hostname or u.path not in ("", "/"):
         raise CairnError(f"URL de remoto inválida: {url!r} (se espera ssh://usuario@host[:puerto])")

@@ -1,10 +1,10 @@
-"""Plantillas de los docs: la estructura de cada tipo.
+"""Doc templates: the structure of each type.
 
-Los comentarios HTML son las indicaciones para quien completa el doc; `search`, `weekly` y
-`promote` los ignoran. Éstas son las de fábrica: `[docs] templates = <carpeta>` en la config las
-reemplaza por las de esa carpeta (`bug.md`, `infra.md`, `plan.md`, `ref.md`, `ref_header.md`,
-`handoff.md`; la que falte, sale de acá). `{titulo}` se reemplaza por el título del doc.
-`cairn defaults <carpeta>` las exporta para partir de ellas.
+The HTML comments are the guidance for whoever fills in the doc; `search`, `weekly` and `promote`
+ignore them. These are the built-in ones: `[docs] templates = <folder>` in the config replaces
+them with that folder's (`bug.md`, `infra.md`, `plan.md`, `ref.md`, `ref_header.md`,
+`handoff.md`; any that is missing comes from here). `{titulo}` is replaced by the doc's title.
+`cairn defaults <folder>` exports them as a starting point.
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ REF = """
 <!-- Qué es esta referencia y cuándo consultarla, en 1-2 líneas. -->
 """
 
-REF_CONTENIDO = """
+REF_CONTENT = """
 ---
 
 ## Contenido
@@ -156,14 +156,14 @@ HANDOFF = """
 
 
 def defaults() -> dict[str, str]:
-    """Las plantillas de fábrica, por nombre de archivo."""
-    return {"bug.md": DIAG, "infra.md": DIAG, "plan.md": PLAN, "ref.md": REF + REF_CONTENIDO,
+    """The built-in templates, by file name."""
+    return {"bug.md": DIAG, "infra.md": DIAG, "plan.md": PLAN, "ref.md": REF + REF_CONTENT,
             "ref_header.md": REF, "handoff.md": HANDOFF}
 
 
-def body(templates_dir: Path | None, kind: str, titulo: str) -> str:
-    """El cuerpo inicial de un doc: `kind` es bug, infra, plan, ref, ref_header (la cabecera de
-    una referencia que crea `promote`) o handoff."""
+def body(templates_dir: Path | None, kind: str, title: str) -> str:
+    """A doc's initial body: `kind` is bug, infra, plan, ref, ref_header (the header of a
+    reference created by `promote`) or handoff."""
     name = f"{kind}.md"
     text = None
     if templates_dir is not None:
@@ -171,7 +171,7 @@ def body(templates_dir: Path | None, kind: str, titulo: str) -> str:
         if p.is_file():
             text = p.read_text(encoding="utf-8")
             if not text.startswith("\n"):
-                text = "\n" + text          # como las de fábrica: una línea en blanco tras el front-matter
+                text = "\n" + text          # like the built-in ones: a blank line after the front-matter
     if text is None:
         text = defaults()[name]
-    return text.replace("{titulo}", titulo)
+    return text.replace("{titulo}", title)

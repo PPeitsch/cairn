@@ -1,5 +1,5 @@
-"""En qué repo se está trabajando: lo que estampa `repo:` al crear un doc y decide qué handoffs le
-tocan a una conversación. Un repo es una carpeta bajo la raíz de proyectos (`~/projects`)."""
+"""Which repo the work is happening in: what `repo:` gets stamped with when a doc is created, and
+which handoffs a conversation is shown. A repo is a folder under the projects root (`~/projects`)."""
 
 from __future__ import annotations
 
@@ -21,8 +21,8 @@ def git_toplevel(path: Path) -> Path | None:
 
 
 def git_main_toplevel(path: Path) -> Path | None:
-    """La raíz del clon principal aunque `path` esté en un worktree (que puede vivir fuera de la
-    raíz de proyectos): el directorio común de git es el `.git` del clon principal."""
+    """The root of the main clone even when `path` is in a worktree (which may live outside the
+    projects root): git's common directory is the main clone's `.git`."""
     common = _git(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if not common:
         return None
@@ -31,7 +31,7 @@ def git_main_toplevel(path: Path) -> Path | None:
 
 
 def repo_of_path(path: Path, root: Path) -> str:
-    """El repo bajo `root` en el que está `path`, o "" si es cross-repo (la raíz misma o afuera)."""
+    """The repo under `root` that `path` is in, or "" if it is cross-repo (the root itself or outside it)."""
     root = root.expanduser().resolve()
     cwd = path.resolve()
     top = git_toplevel(cwd)
@@ -41,7 +41,7 @@ def repo_of_path(path: Path, root: Path) -> str:
     main = git_main_toplevel(cwd) if top else None
     if main and main.resolve() != root and root in main.resolve().parents:
         return str(main.resolve().relative_to(root))
-    # sin git: un subdirectorio de la raíz igual identifica el proyecto
+    # no git: a subdirectory of the root still identifies the project
     if cwd != root and root in cwd.parents:
         return cwd.relative_to(root).parts[0]
     return ""

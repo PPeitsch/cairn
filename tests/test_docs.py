@@ -1,4 +1,4 @@
-"""Paridad con wip-doc: los mismos casos que sus tests, contra la base de eventos."""
+"""Parity with wip-doc: the same cases as its tests, against the event store."""
 
 import json
 import subprocess
@@ -21,7 +21,7 @@ def run(capsys, *args, ok=True):
 
 
 def fill(store, ref, old, new):
-    """Reemplaza texto en el cuerpo (hasta que esté `edit`, con un evento a mano)."""
+    """Replaces text in the body (with a hand-made event, from before `edit` existed)."""
     doc = docs.find(store, ref)
     assert old in doc.body, old
     with store.writer() as w:
@@ -30,7 +30,7 @@ def fill(store, ref, old, new):
 
 @pytest.fixture
 def repo(env, monkeypatch):
-    """Un repo git bajo la raíz de proyectos, como PWD."""
+    """A git repo under the projects root, as the PWD."""
     r = env / "projects" / "repo"
     r.mkdir()
     subprocess.run(["git", "init", "-q", str(r)], check=True)
@@ -40,7 +40,7 @@ def repo(env, monkeypatch):
 
 # ──────────────────────────────────────────────────────────────── new
 
-def test_new_estampa_el_repo_del_pwd(store, repo, capsys):
+def test_new_stamps_the_pwd_repo(store, repo, capsys):
     out = run(capsys, "new", "bcra", "rate_limit", "bug").out
     assert out.strip() == f"{HOY}_bcra_BUG_rate_limit"
     doc = docs.find(store, f"{HOY}_bcra_BUG_rate_limit.md")
@@ -50,7 +50,7 @@ def test_new_estampa_el_repo_del_pwd(store, repo, capsys):
     assert "## Discoveries (en orden)" in doc.body
 
 
-def test_new_ref_sin_fecha_y_plan(store, repo, capsys):
+def test_new_ref_without_date_and_plan(store, repo, capsys):
     run(capsys, "new", "bcra", "endpoints", "ref")
     ref = docs.find(store, "bcra_endpoints")
     assert ref.scope == "ref" and ref.meta["actualizado"] == HOY and "estado" not in ref.meta
@@ -59,7 +59,7 @@ def test_new_ref_sin_fecha_y_plan(store, repo, capsys):
     assert "## Diseño / propuesta" in docs.find(store, f"{HOY}_bcra_cache").body
 
 
-def test_new_cross_repo_y_repo_explicito(store, env, monkeypatch, capsys):
+def test_new_cross_repo_and_explicit_repo(store, env, monkeypatch, capsys):
     monkeypatch.chdir(env / "projects")
     run(capsys, "new", "infra", "vpn")
     assert "repo" not in docs.find(store, f"{HOY}_infra_vpn").meta
@@ -67,7 +67,7 @@ def test_new_cross_repo_y_repo_explicito(store, env, monkeypatch, capsys):
     assert docs.find(store, f"{HOY}_infra_dns").meta["repo"] == "varios"
 
 
-def test_new_no_pisa_y_valida(store, repo, capsys):
+def test_new_does_not_overwrite_and_validates(store, repo, capsys):
     run(capsys, "new", "a", "b")
     assert "Ya existe" in run(capsys, "new", "a", "b", ok=False).err
     assert "Tipo inválido" in run(capsys, "new", "a", "c", "otro", ok=False).err
@@ -77,7 +77,7 @@ def test_new_no_pisa_y_valida(store, repo, capsys):
 
 # ──────────────────────────────────────────────────────────────── close / reopen
 
-def test_close_corta_con_pendientes_y_force(store, repo, capsys):
+def test_close_stops_on_pending_items_and_force(store, repo, capsys):
     run(capsys, "new", "a", "b")
     fill(store, "2026-03-10_a_b", "- [ ]", "- [ ] revisar el cron")
     err = run(capsys, "close", "2026-03-10_a_b", ok=False).err
@@ -87,7 +87,7 @@ def test_close_corta_con_pendientes_y_force(store, repo, capsys):
     assert "Cerrado con 1 pendiente" in err
 
 
-def test_close_descartar(store, repo, capsys):
+def test_close_discard(store, repo, capsys):
     run(capsys, "new", "a", "plan1", "plan")
     fill(store, f"{HOY}_a_plan1", "- [ ]", "- [ ] fase 2")
     assert "--descartar" in run(capsys, "close", f"{HOY}_a_plan1", ok=False).err
@@ -108,7 +108,7 @@ def test_close_descartar(store, repo, capsys):
     assert (doc.scope, doc.estado, doc.meta["nota"]) == ("wip", "en_progreso", "se retoma")
 
 
-def test_close_y_reopen(store, repo, capsys):
+def test_close_and_reopen(store, repo, capsys):
     run(capsys, "new", "a", "plan1", "plan")
     with store.writer() as w:
         w.emit("set_state", docs.find(store, f"{HOY}_a_plan1").id, {"set": {"nota": "baja prioridad"}})
@@ -128,14 +128,14 @@ def test_close_y_reopen(store, repo, capsys):
     assert "Sin motivo" in (run(capsys, "close", doc.name) and run(capsys, "reopen", doc.name).err)
 
 
-def test_ref_no_se_cierra(store, repo, capsys):
+def test_ref_is_not_closed(store, repo, capsys):
     run(capsys, "new", "a", "r", "ref")
     assert "no se cierra" in run(capsys, "close", "a_r", ok=False).err
 
 
 # ──────────────────────────────────────────────────────────────── promote
 
-def test_promote_y_links_que_siguen_al_doc(store, repo, capsys):
+def test_promote_and_links_that_follow_the_doc(store, repo, capsys):
     run(capsys, "new", "bcra", "rate_limit", "bug")
     name = f"{HOY}_bcra_BUG_rate_limit"
     assert "Nada para promover" in run(capsys, "promote", name, "bcra", "limites", ok=False).err
@@ -150,13 +150,13 @@ def test_promote_y_links_que_siguen_al_doc(store, repo, capsys):
     assert meta["origen"] == [f"../_wip/{name}.md"]
     assert meta["repo"] == "repo"
     assert "curl -I" in body and "## Contexto" not in body
-    assert "## Contenido" not in body          # la ref creada por promote no lleva el stub
+    assert "## Contenido" not in body          # the ref created by promote does not carry the stub
     dmeta, _ = parse_front_matter(docs.render(store, docs.find(store, name)))
     assert dmeta["referencias"] == ["../_ref/bcra_limites.md"]
 
     assert "--force" in run(capsys, "promote", name, "bcra", "limites", ok=False).err
 
-    run(capsys, "close", name)                 # los links se calculan: siguen al doc
+    run(capsys, "close", name)                 # links are computed: they follow the doc
     meta, _ = parse_front_matter(docs.render(store, docs.find(store, "bcra_limites")))
     assert meta["origen"] == [f"../_done/{name}.md"]
     ops = [r[0] for r in store.projection.db.execute(
@@ -164,19 +164,19 @@ def test_promote_y_links_que_siguen_al_doc(store, repo, capsys):
     assert ops == ["create", "promote"]
 
 
-def test_promote_seccion_y_agregar(store, repo, capsys):
+def test_promote_section_and_append(store, repo, capsys):
     run(capsys, "new", "bcra", "cache", "plan")
     plan = f"{HOY}_bcra_cache"
     fill(store, plan, "<!-- La solución, con fases si el trabajo es incremental. -->", "Cache LRU.")
     run(capsys, "new", "bcra", "limites", "ref")
     run(capsys, "promote", plan, "bcra", "limites", "--seccion", "diseño")
     ref = docs.find(store, "bcra_limites")
-    assert "## Contenido" in ref.body            # la existente conserva lo suyo
+    assert "## Contenido" in ref.body            # the existing one keeps its content
     assert ref.body.rstrip().endswith("Cache LRU.")
     assert ref.links == [["origen", docs.find(store, plan).id]]
 
 
-# ──────────────────────────────────────────────────────────────── listados y búsqueda
+# ──────────────────────────────────────────────────────────────── listings and search
 
 @pytest.fixture
 def poblado(store, repo, capsys):
@@ -198,7 +198,7 @@ def test_list(poblado, capsys):
     assert run(capsys, "list", "done").out.strip() == f"{HOY}_api_BUG_timeout"
 
 
-def test_list_por_repo(poblado, capsys, monkeypatch):
+def test_list_by_repo(poblado, capsys, monkeypatch):
     run(capsys, "new", "otra", "cosa", "plan", "--repo", "otro")
     run(capsys, "new", "web", "suelto", "plan", "--repo", "varios")
     monkeypatch.setenv("CAIRN_NOW", "2026-03-15T12:00:00+00:00")
@@ -208,11 +208,11 @@ def test_list_por_repo(poblado, capsys, monkeypatch):
     assert "repo (1)\n" in out and "otro (1)\n" in out and "varios (1)\n" in out
     assert (f"  {HOY}_api_abierto  [infra · abierto · modificado {HOY}, hace 5 día(s)]") in out
     assert "handoffs pendientes:\n  2026-03-15_api_HANDOFF_seguir" in out
-    fill(poblado, f"{HOY}_otra_cosa", "## TL;DR", "## TL;DR\n\nalgo")     # lo último que se tocó
+    fill(poblado, f"{HOY}_otra_cosa", "## TL;DR", "## TL;DR\n\nalgo")     # the last one touched
     grupos = [ln for ln in run(capsys, "list", "--por-repo").out.splitlines() if ln.endswith("(1)")]
     assert grupos[0] == "otro (1)"
     assert "modificado 2026-03-15, hoy" in run(capsys, "list", "--por-repo").out
-    assert run(capsys, "list").out.splitlines()[0] == f"{HOY}_otra_cosa"   # el plano no cambia
+    assert run(capsys, "list").out.splitlines()[0] == f"{HOY}_otra_cosa"   # the flat list does not change
 
 
 def test_search(poblado, capsys):
@@ -225,10 +225,10 @@ def test_search(poblado, capsys):
     assert "Regex inválida" in run(capsys, "search", "(", ok=False).err
     out = run(capsys, "search", "--fts", "tardaba").out
     assert f"_done/{HOY}_api_BUG_timeout.md" in out
-    assert "«tardaba»" in out and "1 doc(s), por relevancia\n" in out      # el fragmento, no el TL;DR
-    hits, total = docs.search_fts(poblado, "api", limit=2)                 # los tres docs son de api
+    assert "«tardaba»" in out and "1 doc(s), por relevancia\n" in out      # the snippet, not the TL;DR
+    hits, total = docs.search_fts(poblado, "api", limit=2)                 # all three docs are api's
     assert len(hits) == 2 and total == 3
-    assert "se muestran los 2 más relevantes" in docs.fts_encabezado("api", hits, total)
+    assert "se muestran los 2 más relevantes" in docs.fts_header("api", hits, total)
     assert "inválida" in run(capsys, "search", "--fts", '"', ok=False).err
 
 
@@ -260,7 +260,7 @@ def hook_ctx(capsys, monkeypatch, cwd, source="startup", raw=None):
     return json.loads(out)["hookSpecificOutput"]["additionalContext"] if out else ""
 
 
-def test_handoff_new_take_archiva(store, repo, capsys):
+def test_handoff_new_and_take_archives(store, repo, capsys):
     run(capsys, "new", "repo", "feature", "plan")
     out = run(capsys, "handoff", "new", "repo", "siguientes", "--plan", f"{HOY}_repo_feature.md").out
     name = out.strip()
@@ -276,13 +276,13 @@ def test_handoff_new_take_archiva(store, repo, capsys):
     h = docs.find(store, name)
     assert (h.scope, h.estado, h.meta["usada"]) == ("done", "usada", HOY)
     assert "ya no está pendiente" in run(capsys, "handoff", "take", name, ok=False).err
-    # tomado por error: vuelve a pendiente
+    # taken by mistake: back to pending
     run(capsys, "reopen", name)
     h = docs.find(store, name)
     assert (h.scope, h.estado) == ("wip", "pendiente") and "usada" not in h.meta
 
 
-def test_handoff_drop_y_close_no_vale(store, repo, capsys):
+def test_handoff_drop_and_close_is_refused(store, repo, capsys):
     name = run(capsys, "handoff", "new", "repo", "x").out.strip()
     assert "se archiva con `handoff take`" in run(capsys, "close", name, ok=False).err
     run(capsys, "handoff", "drop", name, "ya no aplica")
@@ -293,7 +293,7 @@ def test_handoff_drop_y_close_no_vale(store, repo, capsys):
                                   run(capsys, "handoff", "drop", f"{HOY}_a_b", ok=False).err)
 
 
-def test_handoff_take_sin_nombre_con_varias_o_ninguna(store, repo, capsys):
+def test_handoff_take_without_name_with_several_or_none(store, repo, capsys):
     assert "No hay handoffs pendientes para repo" in run(capsys, "handoff", "take", ok=False).err
     run(capsys, "handoff", "new", "repo", "a")
     run(capsys, "handoff", "new", "repo", "b")
@@ -301,7 +301,7 @@ def test_handoff_take_sin_nombre_con_varias_o_ninguna(store, repo, capsys):
     assert "Hay 2 handoffs pendientes para repo; decí cuál" in err
 
 
-def test_handoff_hook_segun_repo_y_origen(store, repo, env, capsys, monkeypatch):
+def test_handoff_hook_by_repo_and_source(store, repo, env, capsys, monkeypatch):
     otro = env / "projects" / "otro"
     otro.mkdir()
     subprocess.run(["git", "init", "-q", str(otro)], check=True)
@@ -319,11 +319,11 @@ def test_handoff_hook_segun_repo_y_origen(store, repo, env, capsys, monkeypatch)
     assert "2 handoff(s)" in hook_ctx(capsys, monkeypatch, repo, raw="no es json")
 
 
-def test_handoff_hook_sin_init_no_rompe(env, capsys, monkeypatch):
+def test_handoff_hook_without_init_does_not_break(env, capsys, monkeypatch):
     assert hook_ctx(capsys, monkeypatch, env) == ""
 
 
-def test_handoff_hook_en_worktree_fuera_de_projects(store, repo, tmp_path_factory, capsys, monkeypatch):
+def test_handoff_hook_in_worktree_outside_projects(store, repo, tmp_path_factory, capsys, monkeypatch):
     git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
     subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "x"], check=True)
     wt = tmp_path_factory.mktemp("afuera") / "wt"
@@ -332,12 +332,12 @@ def test_handoff_hook_en_worktree_fuera_de_projects(store, repo, tmp_path_factor
     assert "para repo" in hook_ctx(capsys, monkeypatch, wt)
 
 
-def test_handoff_viejo_y_plan_modificado(store, repo, capsys, monkeypatch):
+def test_stale_handoff_and_modified_plan(store, repo, capsys, monkeypatch):
     run(capsys, "new", "repo", "feature", "plan")
     monkeypatch.setenv("CAIRN_NOW", "2026-03-10T12:00:00+00:00")
     name = run(capsys, "handoff", "new", "repo", "a", "--plan", f"{HOY}_repo_feature").out.strip()
     monkeypatch.setenv("CAIRN_NOW", "2026-03-28T12:00:00+00:00")
-    fill(store, f"{HOY}_repo_feature", "- [ ]", "- [ ] algo")      # el plan se tocó después
+    fill(store, f"{HOY}_repo_feature", "- [ ]", "- [ ] algo")      # the plan was touched afterwards
     assert "hace 18 día(s); VIEJA" in run(capsys, "handoff", "list").out
     assert "sin tomar hace 18 días" in run(capsys, "check", ok=False).out
     out = run(capsys, "handoff", "take", name).out
@@ -345,7 +345,7 @@ def test_handoff_viejo_y_plan_modificado(store, repo, capsys, monkeypatch):
     assert "se modificó después de escrita la nota" in out
 
 
-def test_find_por_id_y_ambiguo(store, repo, capsys):
+def test_find_by_id_and_ambiguous(store, repo, capsys):
     run(capsys, "new", "a", "b")
     doc = docs.find(store, f"{HOY}_a_b")
     assert docs.find(store, doc.id[:8]).id == doc.id

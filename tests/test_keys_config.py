@@ -6,7 +6,7 @@ from cairn import config, keys
 from cairn.store import Store
 
 
-def test_clave_del_nodo(tmp_path):
+def test_node_key(tmp_path):
     path = tmp_path / "node_key"
     keys.generate(path, "laptop")
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
@@ -22,16 +22,16 @@ def test_clave_del_nodo(tmp_path):
     assert not keys.verify(pub, "ab" * 32, "no-es-base64!")
     assert keys.normalize_public(line) == " ".join(line.split()[:2])
     with pytest.raises(FileExistsError):
-        keys.generate(path, "laptop")                  # nunca pisa una clave
+        keys.generate(path, "laptop")                  # never overwrites a key
 
 
-def test_clave_publica_invalida():
+def test_invalid_public_key():
     for bad in ("", "ssh-rsa AAAAB3NzaC1yc2E", "ssh-ed25519 nobase64"):
         with pytest.raises(keys.KeyFileError):
             keys.parse_public(bad)
 
 
-def test_store_genera_la_clave_y_firma(cfg):
+def test_store_generates_the_key_and_signs(cfg):
     with Store(cfg) as s:
         assert cfg.key_path.exists()
         line = s.public_line()
@@ -39,10 +39,10 @@ def test_store_genera_la_clave_y_firma(cfg):
             ev = w.emit("create", "d1", {"name": "x", "meta": {}, "body": ""})
     assert keys.verify(keys.parse_public(line), ev.id, ev.sig)
     with Store(cfg) as s:
-        assert s.public_line() == line                 # la segunda vez la lee
+        assert s.public_line() == line                 # the second time it reads it
 
 
-def test_config_remotos_y_pares(cfg):
+def test_config_remotes_and_peers(cfg):
     def mutate(raw):
         raw["remotes"] = {"vps": {"url": "ssh://cairn@host:2222", "key": "~/.ssh/k"}}
         raw["peers"] = {"vps": {"key": "ssh-ed25519 AAAA", "ssh": "false", "revoked": "2026-03-01"}}
@@ -56,12 +56,12 @@ def test_config_remotos_y_pares(cfg):
     assert "[remotes.vps]" in c.path.read_text()
 
 
-def test_config_invalida(cfg):
+def test_invalid_config(cfg):
     with pytest.raises(config.ConfigError, match="necesita `url`"):
         config.update(lambda raw: raw.update({"remotes": {"vps": {"key": "x"}}}))
 
 
-def test_huella_como_ssh_keygen(tmp_path):
+def test_fingerprint_like_ssh_keygen(tmp_path):
     import shutil
     import subprocess
     keys.generate(tmp_path / "node_key", "laptop")

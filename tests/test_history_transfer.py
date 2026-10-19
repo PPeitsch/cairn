@@ -30,7 +30,7 @@ def plan(store, env, monkeypatch, capsys):
 
 # ──────────────────────────────────────────────────────────────── edit
 
-def test_edit_desde_stdin_cuerpo_y_front_matter(store, plan, capsys, monkeypatch):
+def test_edit_from_stdin_body_and_front_matter(store, plan, capsys, monkeypatch):
     doc = docs.find(store, plan)
     text = docs.render(store, doc).replace("- [ ]", "- [x] hecho").replace(
         "estado: en_progreso", "estado: en_monitoreo\nnota: esperando el deploy")
@@ -42,13 +42,13 @@ def test_edit_desde_stdin_cuerpo_y_front_matter(store, plan, capsys, monkeypatch
     assert "Sin cambios" in run(capsys, "edit", plan, "--stdin", stdin=text, monkeypatch=monkeypatch).out
 
 
-def test_edit_sin_front_matter_solo_cambia_el_cuerpo(store, plan, capsys, monkeypatch):
+def test_edit_without_front_matter_changes_only_the_body(store, plan, capsys, monkeypatch):
     run(capsys, "edit", plan, "--stdin", stdin="# nuevo\n", monkeypatch=monkeypatch)
     doc = docs.find(store, plan)
     assert doc.body == "# nuevo\n" and doc.estado == "en_progreso"
 
 
-def test_edit_set_unset_y_set_state(store, plan, capsys):
+def test_edit_set_unset_and_set_state(store, plan, capsys):
     run(capsys, "edit", plan, "--set", "nota=baja: prioridad")
     run(capsys, "edit", plan, "--set", "estado=propuesto")
     assert docs.find(store, plan).meta["nota"] == "baja: prioridad"
@@ -59,26 +59,26 @@ def test_edit_set_unset_y_set_state(store, plan, capsys):
     assert ops == ["create", "set_state", "set_state", "set_state"]
 
 
-def test_edit_valida_estado_y_tipo(store, plan, capsys):
+def test_edit_validates_status_and_type(store, plan, capsys):
     assert "close / reopen" in run(capsys, "edit", plan, "--set", "estado=resuelto", ok=False).err
     assert "desconocido" in run(capsys, "edit", plan, "--set", "estado=raro", ok=False).err
     assert "tipo" in run(capsys, "edit", plan, "--set", "tipo=otro", ok=False).err
     assert "promote" in run(capsys, "edit", plan, "--set", "tipo=ref", ok=False).err
     assert "no se puede sacar" in run(capsys, "edit", plan, "--unset", "estado", ok=False).err
     assert "clave=valor" in run(capsys, "edit", plan, "--set", "x", ok=False).err
-    run(capsys, "edit", plan, "--set", "tipo=bug")     # entre tipos con ciclo, sí
+    run(capsys, "edit", plan, "--set", "tipo=bug")     # between types with a lifecycle, yes
 
 
-def test_edit_ref_marca_actualizado(store, env, capsys, monkeypatch):
+def test_edit_ref_marks_updated(store, env, capsys, monkeypatch):
     run(capsys, "new", "api", "endpoints", "ref")
     monkeypatch.setenv("CAIRN_NOW", "2026-04-01T10:00:00+00:00")
     run(capsys, "edit", "api_endpoints", "--set", "repo=api")
-    assert docs.find(store, "api_endpoints").meta["actualizado"] == HOY   # sólo meta: no cambia
+    assert docs.find(store, "api_endpoints").meta["actualizado"] == HOY   # meta only: it does not change
     run(capsys, "edit", "api_endpoints", "--stdin", stdin="# endpoints\n\nGET /x\n", monkeypatch=monkeypatch)
     assert docs.find(store, "api_endpoints").meta["actualizado"] == "2026-04-01"
 
 
-def test_edit_ignora_cambios_en_los_vinculos(store, plan, capsys, monkeypatch):
+def test_edit_ignores_link_changes(store, plan, capsys, monkeypatch):
     with store.writer() as w:
         w.emit("edit", docs.find(store, plan).id, {"body": docs.find(store, plan).body.replace(
             "<!-- La solución, con fases si el trabajo es incremental. -->", "LRU.")})
@@ -89,7 +89,7 @@ def test_edit_ignora_cambios_en_los_vinculos(store, plan, capsys, monkeypatch):
     assert docs.find(store, plan).links == [["referencias", docs.find(store, "api_cache_ref").id]]
 
 
-def test_edit_interactivo(store, plan, capsys, monkeypatch, tmp_path):
+def test_interactive_edit(store, plan, capsys, monkeypatch, tmp_path):
     editor = tmp_path / "editor.sh"
     editor.write_text('#!/bin/sh\nsed -i "s/^## Alcance$/## Alcance y límites/" "$1"\n')
     editor.chmod(0o755)
@@ -102,9 +102,9 @@ def test_edit_interactivo(store, plan, capsys, monkeypatch, tmp_path):
     assert "salió con 3" in run(capsys, "edit", plan, ok=False).err
 
 
-def test_edit_interactivo_no_pisa_un_cambio_concurrente(store, plan, capsys, monkeypatch, tmp_path):
+def test_interactive_edit_does_not_overwrite_a_concurrent_change(store, plan, capsys, monkeypatch, tmp_path):
     editor = tmp_path / "editor.sh"
-    # mientras el editor está abierto, otro proceso cambia el doc
+    # while the editor is open, another process changes the doc
     editor.write_text(f'#!/bin/sh\necho x >> "$1"\nCAIRN_NOW= {sys.executable} -m cairn.cli edit {plan} '
                       '--set nota=otro >/dev/null\n')
     editor.chmod(0o755)
@@ -114,7 +114,7 @@ def test_edit_interactivo_no_pisa_un_cambio_concurrente(store, plan, capsys, mon
     assert docs.find(store, plan).meta["nota"] == "otro"
 
 
-# ──────────────────────────────────────────────────────────────── historial
+# ──────────────────────────────────────────────────────────────── history
 
 def test_log_show_diff(store, plan, capsys, monkeypatch):
     run(capsys, "edit", plan, "--set", "nota=uno")
@@ -135,7 +135,7 @@ def test_log_show_diff(store, plan, capsys, monkeypatch):
     assert len(run(capsys, "log", "-n", "2").out.splitlines()) == 2
 
 
-def test_diff_sin_cambios(store, plan, capsys):
+def test_diff_without_changes(store, plan, capsys):
     assert "Sin diferencias" in run(capsys, "diff", plan).out
 
 
@@ -152,7 +152,7 @@ def write(root: Path, rel: str, text: str, mtime: float | None = None):
 
 @pytest.fixture
 def arbol(env):
-    """Un árbol de wip-doc inventado: docs con vínculos, un handoff, basura y un link roto."""
+    """A made-up wip-doc tree: docs with links, a handoff, junk and a broken link."""
     r = env / "arbol"
     write(r, "_done/2026-01-05_api_BUG_timeout.md",
           "---\ntipo: bug\nrepo: api\nestado: resuelto\nfecha: 2026-01-05\ncerrado: 2026-03-08\n"
@@ -192,17 +192,17 @@ def test_import(store, arbol, capsys):
     assert bug.links == [["referencias", ref.id]]
     assert ref.links == [["origen", bug.id]] and ref.meta["origen"] == ["../_done/no_existe.md"]
     assert h.links == [["plan", docs.find(store, "2026-03-01_api_cache").id]]
-    assert bug.updated.startswith("2023-11-14")           # mtime del archivo
+    assert bug.updated.startswith("2023-11-14")           # the file's mtime
     ops = {r[0] for r in store.projection.db.execute("SELECT op FROM events")}
     assert ops == {"import"}
 
-    # dos veces no duplica
+    # twice does not duplicate
     out = run(capsys, "import", str(arbol))
     assert "Importados: 0 doc(s)" in out.out and "ya está en la base" in out.err
     assert "[OK] todo en orden" in run(capsys, "check").out
 
 
-def test_import_avisa_estado_que_no_corresponde_a_la_carpeta(store, env, capsys):
+def test_import_warns_status_not_matching_folder(store, env, capsys):
     r = env / "arbol"
     write(r, "_done/2026-01-01_a_b.md", "---\ntipo: plan\nestado: en_progreso\nfecha: 2026-01-01\n---\n# a\n")
     write(r, "_wip/2026-01-02_a_c.md", "---\nestado: en_progreso\nfecha: 2026-01-02\n---\n# c\n")
@@ -212,7 +212,7 @@ def test_import_avisa_estado_que_no_corresponde_a_la_carpeta(store, env, capsys)
     assert "no tiene _wip" in run(capsys, "import", str(env), ok=False).err
 
 
-def test_export_reproduce_lo_importado(store, arbol, env, capsys):
+def test_export_reproduces_the_import(store, arbol, env, capsys):
     run(capsys, "import", str(arbol))
     dest = env / "export"
     out = run(capsys, "export", str(dest)).out
@@ -227,7 +227,7 @@ def test_export_reproduce_lo_importado(store, arbol, env, capsys):
     assert "0 escrito(s), 4 sin cambios" in run(capsys, "export", str(dest)).out
     run(capsys, "close", "2026-03-01_api_cache", "--force")
     err = run(capsys, "export", str(dest), ok=False).err
-    assert "ya existen con otro contenido" in err      # el handoff apunta ahora a _done/
+    assert "ya existen con otro contenido" in err      # the handoff now points to _done/
     r = run(capsys, "export", str(dest), "--force")
     assert "_wip/2026-03-01_api_cache.md no corresponde a ningún doc" in r.err
     assert (dest / "_done/2026-03-01_api_cache.md").is_file()

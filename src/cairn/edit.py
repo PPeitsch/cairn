@@ -1,15 +1,15 @@
-"""Editar un doc: el cuerpo y el front-matter, como un evento `edit` (o `set_state` si sólo
-cambian `estado`/`nota`).
+"""Editing a doc: its body and front-matter, as an `edit` event (or `set_state` if only
+`estado`/`nota` change).
 
-Se edita el doc como archivo (`show` → editor → de vuelta), así que el front-matter se puede
-tocar a mano igual que en wip-doc, con dos límites:
+The doc is edited as a file (`show` → editor → back), so the front-matter can be changed by hand
+just like in wip-doc, with two limits:
 
-- los vínculos (`origen`, `referencias`, `plan`) no se editan: los manejan `promote` y
-  `handoff new`, y en el archivo son rutas calculadas;
-- `estado` no puede pasar de abierto a cerrado ni al revés: eso es `close` / `reopen` /
-  `handoff take|drop`, que tocan otros campos a la vez.
+- links (`origen`, `referencias`, `plan`) are not edited: `promote` and `handoff new` manage
+  them, and in the file they are computed paths;
+- `estado` cannot go from open to closed or back: that is `close` / `reopen` /
+  `handoff take|drop`, which change other fields at the same time.
 
-Una referencia cuyo cuerpo cambia se marca `actualizado: <hoy>` sola.
+A reference whose body changes gets `actualizado: <today>` on its own.
 """
 
 from __future__ import annotations
@@ -23,26 +23,26 @@ from pathlib import Path
 from cairn import clock, docs
 from cairn.docs import LINK_KINDS, TIPOS_DOC, Doc, Result
 from cairn.markdown import parse_front_matter
-from cairn.projection import ABIERTOS, CERRADOS
+from cairn.projection import CLOSED_STATES, OPEN_STATES
 from cairn.store import CairnError, Store
 
 STATE_KEYS = {"estado", "nota"}
 
 
-def _grupo(estado: str) -> str:
-    return "cerrado" if estado in CERRADOS else "abierto" if estado in ABIERTOS else "?"
+def _group(estado: str) -> str:
+    return "cerrado" if estado in CLOSED_STATES else "abierto" if estado in OPEN_STATES else "?"
 
 
 def changes(doc: Doc, new_meta: dict | None, new_body: str | None) -> dict:
-    """El payload del evento (vacío si no cambia nada). Los vínculos no entran: ver `apply`."""
+    """The event payload (empty if nothing changes). Links are left out: see `apply`."""
     payload: dict = {}
     if new_body is not None and new_body != doc.body:
         payload["body"] = new_body
     if new_meta is not None:
         cur = {k: v for k, v in doc.meta.items() if k not in LINK_KINDS}
-        nueva = {k: v for k, v in new_meta.items() if k not in LINK_KINDS and v not in ("", [], None)}
-        set_ = {k: v for k, v in nueva.items() if cur.get(k) != v}
-        unset = sorted(k for k in cur if k not in nueva)
+        new = {k: v for k, v in new_meta.items() if k not in LINK_KINDS and v not in ("", [], None)}
+        set_ = {k: v for k, v in new.items() if cur.get(k) != v}
+        unset = sorted(k for k in cur if k not in new)
         if set_:
             payload["set"] = set_
         if unset:
@@ -56,11 +56,12 @@ def changes(doc: Doc, new_meta: dict | None, new_body: str | None) -> dict:
     if "estado" in unset and doc.tipo != "ref":
         raise CairnError("`estado` no se puede sacar")
     if "estado" in set_:
-        if _grupo(set_["estado"]) == "?":
+        if _group(set_["estado"]) == "?":
             raise CairnError(f"Estado desconocido: {set_['estado']} (abiertos: "
-                             f"{', '.join(sorted(ABIERTOS))}; cerrados: {', '.join(sorted(CERRADOS))})")
-        if _grupo(set_["estado"]) != _grupo(doc.estado):
-            raise CairnError(f"`estado` no pasa de {_grupo(doc.estado)} a {_grupo(set_['estado'])} "
+                             f"{', '.join(sorted(OPEN_STATES))}; "
+                             f"cerrados: {', '.join(sorted(CLOSED_STATES))})")
+        if _group(set_["estado"]) != _group(doc.estado):
+            raise CairnError(f"`estado` no pasa de {_group(doc.estado)} a {_group(set_['estado'])} "
                              "editando: usar close / reopen / handoff take|drop.")
     if "body" in payload and doc.tipo == "ref" and "actualizado" not in set_:
         payload.setdefault("set", {})["actualizado"] = clock.today()
@@ -75,10 +76,10 @@ def _op(payload: dict) -> str:
 def apply(store: Store, ref: str, text: str | None = None, set_: dict | None = None,
           unset: list[str] | None = None, expected_head: str | None = None,
           body: str | None = None) -> Result:
-    """Aplica una edición. `text`: el doc entero (con o sin front-matter; sin front-matter sólo
-    cambia el cuerpo). `body`: sólo el cuerpo, tal cual (aunque empiece con `---`).
-    `set_`/`unset`: campos sueltos. `expected_head`: si el doc cambió desde ahí (otra edición en
-    el medio), corta en vez de pisarla."""
+    """Applies an edit. `text`: the whole doc (with or without front-matter; without it only the
+    body changes). `body`: just the body, as is (even if it starts with `---`).
+    `set_`/`unset`: individual fields. `expected_head`: if the doc changed since then (another
+    edit in between), stop instead of overwriting it."""
     if text is not None and body is not None:
         raise CairnError("apply: `text` o `body`, no los dos")
     with store.writer() as w:
@@ -91,7 +92,7 @@ def apply(store: Store, ref: str, text: str | None = None, set_: dict | None = N
             meta, body = parse_front_matter(text)
             if meta is None:
                 body = text
-            elif docs.link_paths(store, doc) != {k: _lista(meta.get(k)) for k in LINK_KINDS}:
+            elif docs.link_paths(store, doc) != {k: _as_list(meta.get(k)) for k in LINK_KINDS}:
                 warnings.append("[nota] Los vínculos (origen, referencias, plan) no se editan a mano: "
                                 "se ignoró el cambio.")
         if set_ or unset:
@@ -105,7 +106,7 @@ def apply(store: Store, ref: str, text: str | None = None, set_: dict | None = N
     return Result(docs.get(store, doc.id), warnings, {"changed": bool(payload)})
 
 
-def _lista(v) -> list[str]:
+def _as_list(v) -> list[str]:
     if not v:
         return []
     return [str(x) for x in v] if isinstance(v, list) else [str(v)]
@@ -128,8 +129,9 @@ def editor_command() -> list[str]:
 
 
 def interactive(store: Store, ref: str) -> Result:
-    """Abre el doc en el editor y guarda lo que cambió. El editor corre sin el lock tomado: si
-    mientras tanto otro proceso tocó el doc, no se pisa (y el texto queda en el temporal)."""
+    """Opens the doc in the editor and saves what changed. The editor runs without holding the
+    lock: if another process touched the doc in the meantime, it is not overwritten (and the
+    text stays in the temporary file)."""
     doc = docs.find(store, ref)
     original = docs.render(store, doc)
     tmpdir = Path(tempfile.mkdtemp(prefix="cairn-edit-"))

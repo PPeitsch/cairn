@@ -1,4 +1,4 @@
-"""`python -m cairn`: lo que usa la integración si el comando `cairn` no está en el PATH."""
+"""`python -m cairn`: what the integration uses if the `cairn` command is not on the PATH."""
 
 from cairn.cli import main
 

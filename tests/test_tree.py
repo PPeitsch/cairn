@@ -1,4 +1,4 @@
-"""Lo que queda como archivos en la raíz de proyectos: restos de wip-doc y scripts/validations."""
+"""What stays as files in the projects root: wip-doc leftovers and scripts/validations."""
 
 from cairn import tree
 from cairn.cli import main
@@ -13,13 +13,13 @@ def run(capsys, *args, ok=True):
     return out
 
 
-def test_raiz_vacia_o_inexistente_no_reporta(store, env):
+def test_empty_or_missing_root_reports_nothing(store, env):
     assert tree.problems(store) == []
     (env / "projects").rmdir()
     assert tree.problems(store) == []
 
 
-def test_restos_de_wip_doc(store, env, capsys):
+def test_wip_doc_leftovers(store, env, capsys):
     root = env / "projects"
     run(capsys, "new", "api", "timeout", "--repo", "api")
     name = f"{HOY}_api_timeout"
@@ -41,13 +41,13 @@ def test_restos_de_wip_doc(store, env, capsys):
     assert any("_wip/datos.csv no es un doc" in x for x in p)
     assert any("_done/viejo/ no es una carpeta de archivos (scripts/ o validations/)" in x for x in p)
     assert any(x.startswith("api/_wip/ tiene 1 .md adentro de un repo") for x in p)
-    assert len(p) == 5, p          # ni el README, ni scripts/, ni node_modules
+    assert len(p) == 5, p          # not the README, nor scripts/, nor node_modules
 
     out = run(capsys, "check", ok=False).out
     assert "un doc fuera de cairn" in out and "5 problema(s)" in out
 
 
-def test_search_incluye_archivos_de_scripts_y_validations(store, env, capsys):
+def test_search_includes_scripts_and_validations_files(store, env, capsys):
     root = env / "projects"
     run(capsys, "new", "api", "timeout", "--repo", "api")
     v = root / "_wip" / "validations" / "api_graficos"

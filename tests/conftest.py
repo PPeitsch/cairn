@@ -1,4 +1,4 @@
-"""Cada test corre contra un nodo propio en un temporal: config, datos y proyectos aislados."""
+"""Each test runs against its own node in a temp dir: isolated config, data and projects."""
 
 import pytest
 
@@ -30,7 +30,7 @@ def store(cfg):
 
 
 class Peer:
-    """Otro nodo, con su clave, autorizado en la config del nodo de prueba."""
+    """Another node, with its key, authorized in the test node's config."""
 
     def __init__(self, name, tmp_path):
         from cairn import keys
@@ -47,6 +47,6 @@ class Peer:
 
 @pytest.fixture
 def peer(cfg, tmp_path):
-    """`peer("vps")`: autoriza un nodo y devuelve con qué firmar sus eventos. Abrir el store
-    después (`Store(config.load())`) para que lo conozca."""
+    """`peer("vps")`: authorizes a node and returns what to sign its events with. Open the store
+    afterwards (`Store(config.load())`) so it knows about it."""
     return lambda name: Peer(name, tmp_path)

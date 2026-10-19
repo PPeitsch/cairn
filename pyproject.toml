@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cairn"
-description = "Base local-first para docs de trabajo y handoffs, sincronizada por ssh y accesible por MCP"
+description = "A local-first store for working docs and handoffs, synced over ssh and accessible over MCP"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

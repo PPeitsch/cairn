@@ -1,15 +1,15 @@
-"""`cairn integrate claude-code`: registra el MCP y los hooks de cairn en Claude Code.
-`cairn integrate systemd`: instala el timer de usuario que sincroniza cada tanto (ver `systemd`).
+"""`cairn integrate claude-code`: registers cairn's MCP server and hooks in Claude Code.
+`cairn integrate systemd`: installs the user timer that syncs every so often (see `systemd`).
 
-- El MCP se registra con `claude mcp add --scope user` (el CLI de Claude Code): su config de
-  usuario (`~/.claude.json`) es estado interno que Claude Code reescribe seguido, así que acá
-  sólo se lee, para saber si ya está.
-- Los hooks van a `settings.json` (no hay CLI para eso): se agregan, se reemplazan o se sacan
-  sólo las entradas de cairn, sin tocar las demás (p. ej. el hook de wip-doc mientras conviven).
-  Con `replace_wip_doc` también saca el de wip-doc: es el paso de la migración.
+- The MCP server is registered with `claude mcp add --scope user` (Claude Code's CLI): its user
+  config (`~/.claude.json`) is internal state that Claude Code rewrites often, so here it is
+  only read, to find out whether the server is already there.
+- The hooks go into `settings.json` (there is no CLI for that): only cairn's entries are added,
+  replaced or removed, without touching the rest (e.g. wip-doc's hook while both coexist).
+  With `replace_wip_doc` it also removes wip-doc's: that is the migration step.
 
-Es idempotente (correrlo dos veces no duplica nada) y `remove` lo deshace. Respeta
-`CLAUDE_CONFIG_DIR`, lo que permite probarlo contra una config aislada.
+It is idempotent (running it twice duplicates nothing) and `remove` undoes it. It honors
+`CLAUDE_CONFIG_DIR`, which allows testing it against an isolated config.
 """
 
 from __future__ import annotations
@@ -26,21 +26,21 @@ from pathlib import Path
 
 from cairn.store import CairnError
 
-MCP_NAME = "cairn"          # default de `[claude_code] mcp_name`
-HOOK_TIMEOUT = 10           # default de `[claude_code] end_timeout`
-START_TIMEOUT = 30          # default de `[claude_code] start_timeout`
+MCP_NAME = "cairn"          # default for `[claude_code] mcp_name`
+HOOK_TIMEOUT = 10           # default for `[claude_code] end_timeout`
+START_TIMEOUT = 30          # default for `[claude_code] start_timeout`
 
 
 @dataclass(frozen=True)
 class HookSpec:
     event: str
     matcher: str | None
-    args: tuple[str, ...]          # lo que va después del comando de cairn
+    args: tuple[str, ...]          # what goes after the cairn command
     timeout: int = HOOK_TIMEOUT
 
 
-# Los hooks que cairn registra. El de handoffs trae primero lo de los remotos (si hay) y por eso
-# tiene más tiempo; al cerrar la sesión se empuja en segundo plano, sin demorar la salida.
+# The hooks cairn registers. The handoffs one first pulls from the remotes (if any), so it gets
+# more time; when the session ends, the push runs in the background without delaying the exit.
 HOOKS = (
     HookSpec("SessionStart", "startup|clear", ("handoff", "hook"), timeout=START_TIMEOUT),
     HookSpec("SessionEnd", None, ("sync", "--background")),
@@ -49,8 +49,8 @@ HOOKS = (
 
 @dataclass(frozen=True)
 class Settings:
-    """Lo configurable de la integración (`[claude_code]`): el nombre del MCP y cuánto le da
-    Claude Code a cada hook antes de cortarlo."""
+    """What is configurable about the integration (`[claude_code]`): the MCP server name and
+    how long Claude Code gives each hook before killing it."""
     mcp_name: str = MCP_NAME
     start_timeout: int = START_TIMEOUT
     end_timeout: int = HOOK_TIMEOUT
@@ -71,11 +71,11 @@ class Settings:
 
 @dataclass
 class Report:
-    actions: list[str] = field(default_factory=list)   # lo que se hizo (o se haría, en dry-run)
+    actions: list[str] = field(default_factory=list)   # what was done (or would be, in dry-run)
     unchanged: list[str] = field(default_factory=list)
 
 
-# ──────────────────────────────────────────────────────────────── rutas y comando
+# ──────────────────────────────────────────────────────────────── paths and command
 
 def claude_dir() -> Path:
     v = os.environ.get("CLAUDE_CONFIG_DIR")
@@ -87,15 +87,15 @@ def settings_path() -> Path:
 
 
 def user_config_path() -> Path:
-    """Donde Claude Code guarda los MCP de scope user: `~/.claude.json`, o adentro de
-    `CLAUDE_CONFIG_DIR` si está definida."""
+    """Where Claude Code keeps user-scope MCP servers: `~/.claude.json`, or inside
+    `CLAUDE_CONFIG_DIR` if it is set."""
     v = os.environ.get("CLAUDE_CONFIG_DIR")
     return Path(v) / ".claude.json" if v else Path.home() / ".claude.json"
 
 
 def default_command() -> list[str]:
-    """Cómo se invoca cairn desde Claude Code: la ruta absoluta del comando (los hooks no
-    heredan el PATH de una shell interactiva) o, si no está instalado, el módulo."""
+    """How Claude Code invokes cairn: the command's absolute path (hooks do not inherit an
+    interactive shell's PATH) or, if it is not installed, the module."""
     found = shutil.which("cairn")
     if found:
         return [str(Path(found).resolve())]
@@ -111,7 +111,7 @@ def _is_cairn_hook(command: str, spec: HookSpec) -> bool:
     if parts[-len(tail):] != tail:
         return False
     head = parts[:-len(tail)]
-    # `.../cairn`, `python -m cairn` o `ssh host cairn`
+    # `.../cairn`, `python -m cairn` or `ssh host cairn`
     return any(Path(p).name == "cairn" for p in head)
 
 
@@ -130,7 +130,7 @@ def _load_settings(path: Path) -> dict:
 
 
 def _write_settings(path: Path, data: dict) -> None:
-    """Escritura atómica: un temporal en la misma carpeta y rename."""
+    """Atomic write: a temporary file in the same folder, then rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".settings.", suffix=".tmp")
@@ -146,8 +146,7 @@ def _write_settings(path: Path, data: dict) -> None:
 
 
 def _is_wip_doc_hook(command: str) -> bool:
-    """El hook de handoffs de wip-doc (`.../wip-doc/driver.py handoff hook`), al que reemplaza
-    el de cairn."""
+    """wip-doc's handoffs hook (`.../wip-doc/driver.py handoff hook`), which cairn's replaces."""
     try:
         parts = shlex.split(command)
     except ValueError:
@@ -157,7 +156,7 @@ def _is_wip_doc_hook(command: str) -> bool:
 
 
 def _strip_hooks(groups: list, match) -> tuple[list, list[str]]:
-    """Saca los hooks cuyo comando cumple `match`. (grupos que quedan, comandos sacados)."""
+    """Removes the hooks whose command satisfies `match`. (remaining groups, removed commands)."""
     out, removed = [], []
     for g in groups:
         if not isinstance(g, dict) or not isinstance(g.get("hooks"), list):
@@ -176,7 +175,7 @@ def _strip_hooks(groups: list, match) -> tuple[list, list[str]]:
 
 def _apply_hooks(data: dict, command: list[str], install: bool, report: Report,
                  specs: tuple[HookSpec, ...] = HOOKS) -> bool:
-    """Deja `data` con los hooks de cairn instalados (o sin ellos). True si cambió algo."""
+    """Leaves `data` with cairn's hooks installed (or without them). True if anything changed."""
     hooks = data.get("hooks")
     if hooks is not None and not isinstance(hooks, dict):
         raise CairnError("settings.json: `hooks` no es un objeto: no se tocó nada")
@@ -218,8 +217,8 @@ def _apply_hooks(data: dict, command: list[str], install: bool, report: Report,
 
 
 def _remove_wip_doc_hook(data: dict, report: Report) -> bool:
-    """Saca el hook de handoffs de wip-doc: con los dos activos, cada handoff se avisaría dos
-    veces. True si cambió algo."""
+    """Removes wip-doc's handoffs hook: with both active, every handoff would be announced twice.
+    True if anything changed."""
     hooks = data.get("hooks")
     if not isinstance(hooks, dict) or not isinstance(hooks.get("SessionStart"), list):
         return False
@@ -286,13 +285,13 @@ def _apply_mcp(command: list[str], install: bool, dry_run: bool, report: Report,
             _run_claude("mcp", "add", "--scope", "user", name, "--", *command, "mcp")
 
 
-# ──────────────────────────────────────────────────────────────── entrada
+# ──────────────────────────────────────────────────────────────── entry point
 
 def claude_code(command: list[str] | None = None, remove: bool = False, dry_run: bool = False,
                 mcp: bool = True, hooks: bool = True, replace_wip_doc: bool = False,
                 settings: Settings | None = None) -> Report:
-    """`replace_wip_doc`: además saca el hook de handoffs de wip-doc (el paso de la migración en
-    el que cairn pasa a ser el que avisa). No se puede combinar con `remove`."""
+    """`replace_wip_doc`: also removes wip-doc's handoffs hook (the migration step where cairn
+    takes over the announcing). It cannot be combined with `remove`."""
     if replace_wip_doc and (remove or not hooks):
         raise CairnError("--replace-wip-doc instala el hook de cairn: no va con --remove ni --no-hooks")
     command = command or default_command()
@@ -311,7 +310,7 @@ def claude_code(command: list[str] | None = None, remove: bool = False, dry_run:
     return report
 
 
-# ──────────────────────────────────────────────────────────────── timer de systemd
+# ──────────────────────────────────────────────────────────────── systemd timer
 
 UNIT = "cairn-sync"
 
@@ -356,10 +355,11 @@ def _systemctl(*args: str) -> None:
 
 def systemd(command: list[str] | None = None, interval: int = 15, remove: bool = False,
             dry_run: bool = False) -> Report:
-    """El respaldo de los disparos automáticos: un timer de usuario que corre `cairn sync` cada
-    `interval` minutos (`[sync] interval`). Cubre un push que falló (remoto caído, sin red), un
-    hook de fin de sesión que no corrió y la máquina apagada en el medio. Idempotente; `remove`
-    lo desactiva y borra las units. `CAIRN_SYSTEMD_DIR` cambia dónde se escriben."""
+    """The backup for the automatic triggers: a user timer that runs `cairn sync` every
+    `interval` minutes (`[sync] interval`). It covers a push that failed (remote down, no
+    network), a session-end hook that did not run, and the machine being off in between.
+    Idempotent; `remove` disables it and deletes the units. `CAIRN_SYSTEMD_DIR` changes where
+    they are written."""
     command = command or default_command()
     d = systemd_dir()
     report = Report()

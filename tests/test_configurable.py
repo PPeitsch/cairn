@@ -1,4 +1,4 @@
-"""Lo que es preferencia del usuario sale de la config, no del código."""
+"""What is a user preference comes from the config, not from the code."""
 
 import json
 
@@ -32,7 +32,7 @@ def test_defaults(cfg):
     assert cfg.templates_dir is None and cfg.mcp_instructions is None
 
 
-def test_autor_por_defecto_sin_hardcodeo(env, monkeypatch, tmp_path):
+def test_default_author_is_not_hardcoded(env, monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
     (tmp_path / "gitconfig").write_text("[user]\n\tname = Ada Lovelace\n")
@@ -44,7 +44,7 @@ def test_autor_por_defecto_sin_hardcodeo(env, monkeypatch, tmp_path):
     assert config.default_author() == getpass.getuser()
 
 
-def test_valores_invalidos(cfg):
+def test_invalid_values(cfg):
     with pytest.raises(config.ConfigError, match="número"):
         set_cfg(sync={"timeout": "rápido"})
     with pytest.raises(config.ConfigError, match="mayor que 0"):
@@ -53,7 +53,7 @@ def test_valores_invalidos(cfg):
         set_cfg(claude_code={"mcp_name": "con espacio"})
 
 
-def test_plantillas_propias(cfg, env, capsys):
+def test_custom_templates(cfg, env, capsys):
     d = env / "plantillas"
     d.mkdir()
     (d / "bug.md").write_text("# {titulo}\n\n## Qué pasó\n")
@@ -62,13 +62,13 @@ def test_plantillas_propias(cfg, env, capsys):
     with Store(config.load()) as s:
         b = docs.new(s, "api", "lento", "bug", "api").doc
         assert b.body == "\n# api — lento\n\n## Qué pasó\n"
-        p = docs.new(s, "api", "cache", "plan", "api").doc     # sin archivo: la de fábrica
+        p = docs.new(s, "api", "cache", "plan", "api").doc     # no file: the built-in one
         assert "## Diseño / propuesta" in p.body
         h = docs.handoff_new(s, "api", "sigue", repo="api").doc
         assert "## Para la próxima" in h.body
 
 
-def test_defaults_exporta_y_se_puede_usar(cfg, env, capsys):
+def test_defaults_exports_usable_files(cfg, env, capsys):
     out = run(capsys, "defaults", str(env / "mio")).out
     assert "templates = " in out and "instructions = " in out
     assert (env / "mio" / "templates" / "plan.md").read_text() == templates.PLAN.lstrip("\n")
@@ -80,14 +80,14 @@ def test_defaults_exporta_y_se_puede_usar(cfg, env, capsys):
             templates.body(None, "plan", "api — x")
 
 
-def test_instrucciones_del_mcp(cfg, env):
+def test_mcp_instructions(cfg, env):
     assert mcp_server.instructions() == mcp_server.INSTRUCTIONS
     (env / "inst.md").write_text("Mis convenciones.\n")
     set_cfg(mcp={"instructions": str(env / "inst.md")})
     assert mcp_server.instructions() == "Mis convenciones.\n"
 
 
-def test_handoff_viejo_configurable(cfg, capsys):
+def test_stale_handoff_is_configurable(cfg, capsys):
     with Store(config.load()) as s:
         docs.handoff_new(s, "api", "sigue", repo="api")
     import os
@@ -100,7 +100,7 @@ def test_handoff_viejo_configurable(cfg, capsys):
         os.environ["CAIRN_NOW"] = "2026-03-10T12:00:00+00:00"
 
 
-def test_carpetas_de_archivos_configurables(cfg, env):
+def test_file_dirs_are_configurable(cfg, env):
     root = env / "projects"
     (root / "_wip" / "notas").mkdir(parents=True)
     (root / "_wip" / "notas" / "x.md").write_text("una aguja\n")
@@ -113,7 +113,7 @@ def test_carpetas_de_archivos_configurables(cfg, env):
         assert [str(h.path) for h in tree.search_files(s, "aguja")] == ["_wip/notas/x.md"]
 
 
-def test_integrate_toma_nombre_y_timeouts(cfg, env, monkeypatch):
+def test_integrate_takes_name_and_timeouts(cfg, env, monkeypatch):
     d = env / "claude"
     d.mkdir()
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(d))
@@ -123,7 +123,7 @@ def test_integrate_toma_nombre_y_timeouts(cfg, env, monkeypatch):
     assert hooks["SessionStart"][0]["hooks"][0]["timeout"] == 45
     assert hooks["SessionEnd"][0]["hooks"][0]["timeout"] == 5
     assert len(rep.actions) == 2
-    # cambiar sólo el timeout también es un cambio
+    # changing only the timeout is a change too
     set_cfg(claude_code={"start_timeout": "60"})
     rep = integrate.claude_code(["/opt/cairn"], mcp=False)
     start = json.loads((d / "settings.json").read_text())["hooks"]["SessionStart"]

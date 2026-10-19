@@ -1,4 +1,4 @@
-"""El servidor MCP contra un nodo aislado, con el cliente en proceso del SDK."""
+"""The MCP server against an isolated node, with the SDK's in-process client."""
 
 import asyncio
 
@@ -31,7 +31,7 @@ def node(cfg, monkeypatch, env):
     return cfg
 
 
-def test_tools_e_instrucciones(node):
+def test_tools_and_instructions(node):
     async def go():
         async with Client(mcp_server.build_server()) as c:
             return c.instructions, {t.name: t for t in (await c.list_tools()).tools}
@@ -43,10 +43,10 @@ def test_tools_e_instrucciones(node):
     assert "pattern" in tools["cairn_search"].input_schema["required"]
 
 
-def test_ciclo_de_vida(node):
+def test_lifecycle(node):
     text = ok("cairn_new", {"area": "demo", "tema": "lento", "tipo": "bug"})
     assert "Creado: 2026-03-10_demo_BUG_lento" in text
-    assert "repo: demo" in text                       # sale del directorio de la conversación
+    assert "repo: demo" in text                       # comes from the conversation's directory
 
     assert "Guardado" in ok("cairn_edit", {"doc": "2026-03-10_demo_BUG_lento", "old_text": "## TL;DR",
                                            "new_text": "## TL;DR\n\nSe arregló.\n\n- [ ] confirmar"})
@@ -68,7 +68,7 @@ def test_ciclo_de_vida(node):
     assert "[bug · descartado 2026-03-10" in ok("cairn_weekly")
 
 
-def test_new_con_cuerpo_y_busqueda(node):
+def test_new_with_body_and_search(node):
     body = "---\n\n# Raro\n\n## TL;DR\n\nUn cuerpo que empieza con una regla horizontal.\n"
     ok("cairn_new", {"area": "demo", "tema": "raro", "body": body})
     shown = ok("cairn_show", {"doc": "2026-03-10_demo_raro"})
@@ -79,7 +79,7 @@ def test_new_con_cuerpo_y_busqueda(node):
     assert "sin coincidencias" in ok("cairn_search", {"pattern": "zzz"})
 
 
-def test_edit_old_text_ambiguo_o_ausente(node):
+def test_edit_old_text_ambiguous_or_missing(node):
     ok("cairn_new", {"area": "demo", "tema": "x", "body": "# X\n\nuno uno\n"})
     err, text = call("cairn_edit", {"doc": "2026-03-10_demo_x", "old_text": "uno", "new_text": "dos"})
     assert err and "2 veces" in text
@@ -89,19 +89,19 @@ def test_edit_old_text_ambiguo_o_ausente(node):
     assert err and "van juntos" in text
 
 
-def test_edit_no_cruza_estados(node):
+def test_edit_does_not_cross_status_groups(node):
     ok("cairn_new", {"area": "demo", "tema": "x"})
     err, text = call("cairn_edit", {"doc": "2026-03-10_demo_x", "set_fields": {"estado": "resuelto"}})
     assert err and "close / reopen" in text
     assert "Guardado" in ok("cairn_edit", {"doc": "2026-03-10_demo_x", "set_fields": {"nota": "ojo"}})
 
 
-def test_errores_son_de_la_tool(node):
+def test_errors_are_tool_errors(node):
     err, text = call("cairn_show", {"doc": "no_existe"})
     assert err and "No encontrado: no_existe" in text
 
 
-def test_sin_init(env, monkeypatch):
+def test_without_init(env, monkeypatch):
     err, text = call("cairn_list")
     assert err and "cairn init" in text
 
@@ -136,7 +136,7 @@ def test_promote_log_diff_weekly_check(node):
     assert "Todo en orden" in ok("cairn_check")
 
 
-def test_lectura_acotada(node, monkeypatch):
+def test_bounded_reading(node, monkeypatch):
     largo = "## TL;DR\n\nResumen.\n\n## Detalle\n\n" + "linea de relleno con costo\n" * 400
     ok("cairn_new", {"area": "demo", "tema": "largo", "tipo": "plan", "body": "# demo largo\n\n" + largo})
     idx = ok("cairn_show", {"doc": "2026-03-10_demo_largo"})
@@ -149,7 +149,7 @@ def test_lectura_acotada(node, monkeypatch):
     err, text = call("cairn_show", {"doc": "2026-03-10_demo_largo", "seccion": "nada"})
     assert err and "Secciones:" in text
 
-    # la regex con tope: docs con más coincidencias primero, el resto por nombre
+    # capped regex: docs with the most hits first, the rest by name
     for i in range(3):
         ok("cairn_new", {"area": "demo", "tema": f"chico{i}", "body": f"# chico {i}\n\ncosto\n"})
     from cairn import config

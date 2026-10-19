@@ -1,10 +1,10 @@
-"""El log de eventos: archivos JSONL por nodo y segmento, sólo de agregado.
+"""The event log: append-only JSONL files per node and segment.
 
-    logs/<nodo>/<segmento>.jsonl      segmento: 000001, 000002, …
+    logs/<node>/<segment>.jsonl      segment: 000001, 000002, …
 
-Cada nodo escribe únicamente en su carpeta; las de los otros nodos llegan por sync. Un segmento
-se cierra al pasar `SEGMENT_BYTES` y se sigue en el siguiente, así el sync puede intercambiar
-segmentos enteros y comparar tamaños para saber qué falta.
+Each node writes only to its own folder; the other nodes' folders arrive by sync. A segment is
+closed once it passes `SEGMENT_BYTES` and writing continues in the next one, so sync can exchange
+whole segments and compare sizes to find out what is missing.
 """
 
 from __future__ import annotations
@@ -22,13 +22,13 @@ _SEG_SUFFIX = ".jsonl"
 
 @dataclass(frozen=True)
 class Entry:
-    """Un evento leído del log, con su posición."""
+    """An event read from the log, with its position."""
 
     node: str
     segment: str
-    offset: int          # byte donde empieza la línea
-    end: int             # byte siguiente al `\n` que la cierra
-    event: Event | None  # None si la línea está corrupta (ver `error`)
+    offset: int          # byte where the line starts
+    end: int             # byte right after the `\n` that ends it
+    event: Event | None  # None if the line is corrupt (see `error`)
     error: str | None = None
 
 
@@ -40,7 +40,7 @@ class EventLog:
         self.node = node
         self.segment_bytes = segment_bytes
 
-    # -- estructura
+    # -- layout
     def nodes(self) -> list[str]:
         if not self.root.is_dir():
             return []
@@ -55,7 +55,7 @@ class EventLog:
     def segment_path(self, node: str, segment: str) -> Path:
         return self.root / node / f"{segment}{_SEG_SUFFIX}"
 
-    # -- escritura (sólo en el nodo propio)
+    # -- writing (own node only)
     def _current_segment(self) -> Path:
         segs = self.segments(self.node)
         if not segs:
@@ -66,8 +66,8 @@ class EventLog:
         return last
 
     def append(self, events: list[Event]) -> None:
-        """Agrega los eventos al segmento actual del nodo propio, en una sola escritura, y hace
-        fsync: cuando vuelve, los eventos están en disco."""
+        """Appends the events to the own node's current segment in a single write, and fsyncs:
+        when it returns, the events are on disk."""
         if not events:
             return
         for ev in events:
@@ -78,8 +78,8 @@ class EventLog:
         path.parent.mkdir(parents=True, exist_ok=True)
         data = "".join(ev.to_json() + "\n" for ev in events).encode("utf-8")
         with open(path, "ab") as f:
-            # una escritura cortada a la mitad deja la última línea sin `\n`: se cierra antes de
-            # seguir, así la línea rota queda sola (y `check` la reporta) en vez de pegarse a esta
+            # a write cut halfway leaves the last line without `\n`: close it before continuing, so
+            # the broken line stays on its own (and `check` reports it) instead of merging with this one
             if f.tell() > 0:
                 with open(path, "rb") as r:
                     r.seek(-1, os.SEEK_END)
@@ -89,9 +89,9 @@ class EventLog:
             f.flush()
             os.fsync(f.fileno())
 
-    # -- lectura
+    # -- reading
     def read_segment(self, node: str, segment: str, start: int = 0):
-        """Las entradas completas (terminadas en `\\n`) desde el byte `start`."""
+        """The complete entries (ending in `\\n`) from byte `start` on."""
         path = self.segment_path(node, segment)
         try:
             with open(path, "rb") as f:
@@ -100,7 +100,7 @@ class EventLog:
         except FileNotFoundError:
             return
         pos = start
-        for raw in data.split(b"\n")[:-1]:   # lo que sigue al último \n está incompleto
+        for raw in data.split(b"\n")[:-1]:   # whatever follows the last \n is incomplete
             end = pos + len(raw) + 1
             if raw.strip():
                 try:
@@ -118,11 +118,11 @@ class EventLog:
                 yield from self.read_segment(node, seg)
 
     def sizes(self) -> dict[tuple[str, str], int]:
-        """Tamaño de cada segmento: lo que hay en disco, para comparar con lo ya proyectado."""
+        """Size of each segment: what is on disk, to compare with what was already projected."""
         return {(n, s): self.segment_path(n, s).stat().st_size
                 for n in self.nodes() for s in self.segments(n)}
 
-    # -- sync: los segmentos como bytes
+    # -- sync: segments as bytes
     def read_bytes(self, node: str, segment: str) -> bytes:
         try:
             return self.segment_path(node, segment).read_bytes()
@@ -130,8 +130,8 @@ class EventLog:
             return b""
 
     def inventory(self) -> dict[str, dict[str, list]]:
-        """`{nodo: {segmento: [tamaño, sha256]}}` de lo que hay en disco hasta el último `\\n`
-        (una línea a medio escribir no cuenta)."""
+        """`{node: {segment: [size, sha256]}}` of what is on disk up to the last `\\n` (a
+        half-written line does not count)."""
         out: dict[str, dict[str, list]] = {}
         for n in self.nodes():
             for seg in self.segments(n):
@@ -141,9 +141,9 @@ class EventLog:
         return out
 
     def append_raw(self, node: str, segment: str, offset: int, data: bytes, own: bool = False) -> None:
-        """Agrega bytes que llegaron por sync al segmento de otro nodo (o al propio, con `own`:
-        el restore de un nodo que perdió sus datos). Sólo si lo local es exactamente lo que el
-        otro lado creía (`offset`): si no, no se toca nada."""
+        """Appends bytes that arrived by sync to another node's segment (or to the own one, with
+        `own`: the restore of a node that lost its data). Only if the local copy is exactly what
+        the other side believed it was (`offset`): otherwise nothing is touched."""
         if node == self.node and not own:
             raise EventError(f"el log de {node} sólo lo escribe {node}")
         if not NODE_RE.match(node) or not (segment.isdigit() and len(segment) == 6):

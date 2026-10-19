@@ -1,12 +1,12 @@
-"""Formato canónico de un evento y cómo se calcula su hash.
+"""The canonical form of an event and how its hash is computed.
 
-Un evento es una operación sobre un doc. Su `id` es el SHA-256 de la forma canónica: JSON UTF-8
-con las claves ordenadas, sin espacios, de todos los campos salvo `id` y `sig`. La firma (`sig`,
-ed25519 del nodo, fase 3) va sobre el `id`, así que no entra en el hash y se puede agregar o
-verificar sin recalcularlo.
+An event is an operation on a doc. Its `id` is the SHA-256 of the canonical form: UTF-8 JSON with
+sorted keys and no whitespace, of every field except `id` and `sig`. The signature (`sig`, the
+node's ed25519) covers the `id`, so it is not part of the hash and can be added or verified
+without recomputing it.
 
-`prev` es el `id` del evento anterior del mismo doc (`None` en el que lo crea): forma una cadena
-por doc, como los commits de git.
+`prev` is the `id` of the previous event of the same doc (`None` in the one that creates it): it
+forms one chain per doc, like git commits.
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ from dataclasses import dataclass, field
 
 FORMAT_VERSION = 1
 
-# Operaciones que crean un doc (no tienen `prev`).
+# Operations that create a doc (they have no `prev`).
 CREATE_OPS = frozenset({"create", "import", "handoff_new"})
-# Operaciones que lo modifican. Todas se aplican igual (ver `projection.fold`); el nombre dice
-# qué se hizo y es lo que muestran `log` y `weekly`.
+# Operations that modify it. They are all applied the same way (see `projection.fold`); the name
+# says what was done and is what `log` and `weekly` show.
 CHANGE_OPS = frozenset({
     "edit", "set_state", "close", "reopen", "promote", "link", "unlink",
     "handoff_take", "handoff_drop", "resolve",
@@ -33,12 +33,12 @@ _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class EventError(ValueError):
-    """Un evento mal formado o cuyo hash no coincide con su contenido."""
+    """A malformed event, or one whose hash does not match its content."""
 
 
 def _check_json(value, where: str = "payload") -> None:
-    """Sólo tipos con una única representación JSON: sin floats (su texto depende de la
-    implementación y cambiaría el hash) ni claves que no sean strings."""
+    """Only types with a single JSON representation: no floats (their text depends on the
+    implementation and would change the hash) and no non-string keys."""
     if value is None or isinstance(value, (bool, int, str)):
         return
     if isinstance(value, float):
@@ -72,7 +72,7 @@ class Event:
     sig: str | None = None
     id: str = ""
 
-    # -- construcción
+    # -- construction
     @classmethod
     def new(cls, *, node: str, ts: str, op: str, doc_id: str, payload: dict,
             prev: str | None) -> Event:
@@ -90,7 +90,7 @@ class Event:
     def with_id(self) -> Event:
         return Event(**{**self.__dict__, "id": self.compute_id()})
 
-    # -- validación
+    # -- validation
     def validate(self, check_id: bool = True) -> None:
         if self.v != FORMAT_VERSION:
             raise EventError(f"versión de formato desconocida: {self.v}")
@@ -114,7 +114,7 @@ class Event:
         if check_id and self.id != self.compute_id():
             raise EventError(f"el id {self.id[:12]} no coincide con el contenido del evento")
 
-    # -- serialización (una línea del log)
+    # -- serialization (one log line)
     def to_json(self) -> str:
         d = {**self.hashed_fields(), "id": self.id, "sig": self.sig}
         return canonical_json(d).decode("utf-8")

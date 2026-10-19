@@ -9,7 +9,7 @@ def test_init_creates_config_and_data(env, capsys):
     cfg = config.load()
     assert cfg.node == "laptop"
     assert cfg.db_path.is_file()
-    # segunda vez: no pisa nada
+    # second time: overwrites nothing
     assert main(["init", "--node", "otro"]) == 0
     assert "ya está inicializado" in capsys.readouterr().out
     assert config.load().node == "laptop"

@@ -1,19 +1,19 @@
-"""La proyección: SQLite + FTS5 armada a partir del log, reconstruible en cualquier momento.
+"""The projection: SQLite + FTS5 built from the log, rebuildable at any time.
 
-Tablas:
+Tables:
 
-- `events`: todos los eventos conocidos, con su `status` en la cadena del doc (`applied`,
-  `divergent` si quedó en una rama que no es la principal, `resolved` si es de una rama que un
-  `resolve` ya decidió, `orphan` si su `prev` no llegó).
-- `docs`: el estado actual de cada doc (front-matter en `meta`, cuerpo en `body`).
-- `links`: los vínculos entre docs (`origen`, `referencias`, `plan`), por id.
-- `revisions`: el estado después de cada evento de la cadena principal (historial, diff, show).
-- `docs_fts`: índice FTS5 sobre nombre, título y cuerpo.
-- `log_pos`: hasta qué byte de cada segmento del log ya se proyectó.
+- `events`: every known event, with its `status` in the doc's chain (`applied`, `divergent` if
+  it ended up on a branch that is not the main one, `resolved` if it belongs to a branch a
+  `resolve` already settled, `orphan` if its `prev` has not arrived).
+- `docs`: the current state of each doc (front-matter in `meta`, body in `body`).
+- `links`: the links between docs (`origen`, `referencias`, `plan`), by id.
+- `revisions`: the state after each event of the main chain (history, diff, show).
+- `docs_fts`: FTS5 index over name, title and body.
+- `log_pos`: up to which byte of each log segment has already been projected.
 
-El estado de un doc es una función determinística del conjunto de sus eventos: cada vez que
-llega uno, el doc se vuelve a proyectar entero. Así da lo mismo en qué orden llegaron, y una
-`rebuild` desde el log llega al mismo resultado que la proyección incremental.
+A doc's state is a deterministic function of the set of its events: every time one arrives, the
+whole doc is projected again. So the order they arrived in does not matter, and a `rebuild` from
+the log reaches the same result as the incremental projection.
 """
 
 from __future__ import annotations
@@ -30,9 +30,9 @@ from cairn.events import CREATE_OPS, Event
 
 SCHEMA_VERSION = 1
 
-# estados que dejan el doc cerrado (en el árbol de wip-doc: `_done/`)
-CERRADOS = frozenset({"resuelto", "completado", "descartado", "archivado", "usada", "descartada"})
-ABIERTOS = frozenset({"en_progreso", "en_monitoreo", "propuesto", "pendiente"})
+# statuses that leave the doc closed (in the wip-doc tree: `_done/`)
+CLOSED_STATES = frozenset({"resuelto", "completado", "descartado", "archivado", "usada", "descartada"})
+OPEN_STATES = frozenset({"en_progreso", "en_monitoreo", "propuesto", "pendiente"})
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS info (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -88,14 +88,14 @@ class DocState:
 
     @property
     def scope(self) -> str:
-        """Dónde estaría en el árbol de wip-doc: `ref`, `done` o `wip`."""
+        """Where it would be in the wip-doc tree: `ref`, `done` or `wip`."""
         if self.tipo == "ref":
             return "ref"
-        return "done" if self.estado in CERRADOS else "wip"
+        return "done" if self.estado in CLOSED_STATES else "wip"
 
     @property
     def closed(self) -> str | None:
-        # un handoff no se cierra: se usa o se descarta, y esa fecha hace de cierre
+        # a handoff is not closed: it is taken or dropped, and that date acts as the closing date
         for k in ("cerrado", "usada", "descartada"):
             if self.meta.get(k):
                 return str(self.meta[k])
@@ -108,14 +108,14 @@ class DocState:
 
 
 def fold(state: DocState | None, ev: Event) -> DocState:
-    """Aplica un evento al estado de un doc. Los que crean traen el doc entero; el resto trae
-    los cambios concretos, con la misma forma para todas las operaciones:
+    """Applies an event to a doc's state. Creating events carry the whole doc; the rest carry
+    the specific changes, in the same shape for every operation:
 
-        body          cuerpo nuevo (reemplaza)
-        name          nombre nuevo
-        set / unset   campos del front-matter que cambian / que se sacan
-        link_add      [[kind, doc_id], …] vínculos que se agregan
-        link_remove   ídem, que se sacan
+        body          new body (replaces it)
+        name          new name
+        set / unset   front-matter fields that change / that are removed
+        link_add      [[kind, doc_id], …] links that are added
+        link_remove   same, links that are removed
     """
     p = ev.payload
     if ev.op in CREATE_OPS:
@@ -142,12 +142,12 @@ def fold(state: DocState | None, ev: Event) -> DocState:
 
 
 def chain(events: list[Event]) -> tuple[list[Event], set[str], set[str]]:
-    """La cadena principal de un doc y qué eventos quedan afuera.
+    """A doc's main chain, and which events are left out of it.
 
-    Raíz: el evento sin `prev` (si hay varias, la más vieja por `(ts, id)`). Desde ahí se sigue
-    el hijo de cada evento; si un evento tiene más de un hijo, la cadena se bifurcó (dos nodos
-    escribieron sobre el mismo head): sigue la rama del hijo más viejo y el resto queda
-    `divergent`, para resolver a mano. Lo que no cuelga de ninguna raíz es `orphan`.
+    Root: the event without `prev` (if there are several, the oldest by `(ts, id)`). From there
+    it follows each event's child; if an event has more than one child, the chain forked (two
+    nodes wrote on the same head): it follows the oldest child's branch and the rest is left
+    `divergent`, to be resolved by hand. Whatever does not hang from any root is `orphan`.
     """
     key = attrgetter("ts", "id")
     roots = sorted((e for e in events if e.prev is None), key=key)
@@ -165,7 +165,7 @@ def chain(events: list[Event]) -> tuple[list[Event], set[str], set[str]]:
                 break
             cur = kids[0]
     on_main = {e.id for e in main}
-    # todo lo alcanzable desde alguna raíz que no está en la cadena principal es divergente
+    # everything reachable from some root that is not on the main chain is divergent
     reachable: set[str] = set()
     stack = [r.id for r in roots]
     while stack:
@@ -179,7 +179,7 @@ def chain(events: list[Event]) -> tuple[list[Event], set[str], set[str]]:
     return main, divergent, orphan
 
 
-# ──────────────────────────────────────────────────────────────── proyección
+# ──────────────────────────────────────────────────────────────── projection
 
 class Projection:
     def __init__(self, path: Path):
@@ -194,30 +194,30 @@ class Projection:
             with self.db:
                 self.db.execute("INSERT INTO info VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
         elif int(row["value"]) != SCHEMA_VERSION:
-            # la proyección es descartable: con otro esquema se rehace desde el log
+            # the projection is disposable: with another schema it is rebuilt from the log
             self.reset()
 
     def close(self) -> None:
         self.db.close()
 
     def reset(self) -> None:
-        """Vacía la proyección (el log no se toca)."""
+        """Empties the projection (the log is not touched)."""
         with self.db:
             for t in ("log_pos", "events", "docs", "links", "revisions", "docs_fts"):
                 self.db.execute(f"DELETE FROM {t}")
             self.db.execute("INSERT OR REPLACE INTO info VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
 
-    # -- posiciones del log
+    # -- log positions
     def positions(self) -> dict[tuple[str, str], int]:
         return {(r["node"], r["segment"]): r["pos"] for r in self.db.execute("SELECT * FROM log_pos")}
 
     def set_position(self, node: str, segment: str, pos: int) -> None:
         self.db.execute("INSERT OR REPLACE INTO log_pos VALUES (?, ?, ?)", (node, segment, pos))
 
-    # -- ingesta
+    # -- ingestion
     def ingest(self, events: list[Event]) -> set[str]:
-        """Registra eventos nuevos (los repetidos se ignoran). Devuelve los docs afectados.
-        No hace commit: lo hace quien llama, junto con las posiciones del log."""
+        """Records new events (repeated ones are ignored). Returns the affected docs. It does not
+        commit: the caller does, together with the log positions."""
         touched = set()
         for ev in events:
             cur = self.db.execute(
@@ -234,10 +234,10 @@ class Projection:
         return [_row_event(r) for r in rows]
 
     def reproject(self, doc_id: str) -> None:
-        """Rehace el estado del doc desde todos sus eventos."""
+        """Rebuilds the state of the doc from all its events."""
         events = self.doc_events(doc_id)
         main, divergent, orphan = chain(events)
-        # un `resolve` en la cadena principal da por resueltas las ramas que nombra
+        # a `resolve` on the main chain settles the branches it names
         resolved = {i for e in main if e.op == "resolve" for i in e.payload.get("resolves") or []}
         resolved &= divergent
         divergent -= resolved
@@ -255,7 +255,7 @@ class Projection:
         updated = main[0].ts
         for seq, ev in enumerate(main):
             state = fold(state, ev)
-            # un doc importado conserva cuándo se tocó por última vez en el árbol de origen
+            # an imported doc keeps when it was last touched in the source tree
             updated = (ev.payload.get("updated") or ev.ts) if ev.op == "import" else ev.ts
             db.execute(
                 "INSERT INTO revisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -274,7 +274,7 @@ class Projection:
         db.execute("INSERT INTO docs_fts (doc_id, name, title, body) VALUES (?, ?, ?, ?)",
                    (doc_id, state.name, state.title, state.body))
 
-    # -- lectura
+    # -- reading
     def head(self, doc_id: str) -> str | None:
         row = self.db.execute("SELECT head FROM docs WHERE id = ?", (doc_id,)).fetchone()
         return row["head"] if row else None
