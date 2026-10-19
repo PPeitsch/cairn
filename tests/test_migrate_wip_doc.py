@@ -61,13 +61,13 @@ def arbol(env):
 
 def test_import(store, arbol, capsys):
     out = run(capsys, *IMPORT, str(arbol), "--dry-run")
-    assert "Se importarían: 4 doc(s), 3 vínculo(s)" in out.out
+    assert "Would import: 4 doc(s), 3 link(s)" in out.out
     assert store.projection.count_events() == 0
     out = run(capsys, *IMPORT, str(arbol))
-    assert "Importados: 4 doc(s), 3 vínculo(s)" in out.out
-    assert "viejo_sin_front_matter.md: sin front-matter" in out.err
+    assert "Imported: 4 doc(s), 3 link(s)" in out.out
+    assert "viejo_sin_front_matter.md: no front-matter" in out.err
     assert "api_limites: origen → ../_done/no_existe.md" in out.err
-    assert "3 archivo(s) que no son docs" in out.err
+    assert "3 file(s) that are not docs" in out.err
 
     bug = docs.find(store, "2026-01-05_api_BUG_timeout")
     ref = docs.find(store, "api_limites")
@@ -82,8 +82,8 @@ def test_import(store, arbol, capsys):
 
     # twice does not duplicate
     out = run(capsys, *IMPORT, str(arbol))
-    assert "Importados: 0 doc(s)" in out.out and "ya está en la base" in out.err
-    assert "[OK] todo en orden" in run(capsys, "check").out
+    assert "Imported: 0 doc(s)" in out.out and "already in the database" in out.err
+    assert "[OK] all in order" in run(capsys, "check").out
 
 
 def test_import_warns_status_not_matching_folder(store, env, capsys):
@@ -91,16 +91,16 @@ def test_import_warns_status_not_matching_folder(store, env, capsys):
     write(r, "_done/2026-01-01_a_b.md", "---\ntipo: plan\nestado: en_progreso\nfecha: 2026-01-01\n---\n# a\n")
     write(r, "_wip/2026-01-02_a_c.md", "---\nestado: en_progreso\nfecha: 2026-01-02\n---\n# c\n")
     err = run(capsys, *IMPORT, str(r)).err
-    assert "no corresponde a _done/ — queda en wip" in err
+    assert "does not match _done/ — it goes to wip" in err
     assert "tipo '' → infra" in err
-    assert "no tiene _wip" in run(capsys, *IMPORT, str(env), ok=False).err
+    assert "has no _wip" in run(capsys, *IMPORT, str(env), ok=False).err
 
 
 def test_export_reproduces_the_import(store, arbol, env, capsys):
     run(capsys, *IMPORT, str(arbol))
     dest = env / "export"
     out = run(capsys, *EXPORT, str(dest)).out
-    assert "4 escrito(s)" in out
+    assert "4 written" in out
     for rel in ("_done/2026-01-05_api_BUG_timeout.md", "_wip/2026-03-01_api_cache.md",
                 "_wip/2026-03-09_api_HANDOFF_seguir.md"):
         assert (dest / rel).read_text() == (arbol / rel).read_text(), rel
@@ -108,12 +108,12 @@ def test_export_reproduces_the_import(store, arbol, env, capsys):
     assert meta["origen"] == ["../_done/no_existe.md", "../_done/2026-01-05_api_BUG_timeout.md"]
     assert (dest / "_done/2026-01-05_api_BUG_timeout.md").stat().st_mtime == 1_700_000_000
 
-    assert "0 escrito(s), 4 sin cambios" in run(capsys, *EXPORT, str(dest)).out
+    assert "0 written, 4 unchanged" in run(capsys, *EXPORT, str(dest)).out
     run(capsys, "close", "2026-03-01_api_cache", "--force")
     err = run(capsys, *EXPORT, str(dest), ok=False).err
-    assert "ya existen con otro contenido" in err      # the handoff now points to _done/
+    assert "already exist with other content" in err      # the handoff now points to _done/
     r = run(capsys, *EXPORT, str(dest), "--force")
-    assert "_wip/2026-03-01_api_cache.md no corresponde a ningún doc" in r.err
+    assert "_wip/2026-03-01_api_cache.md matches no exported doc" in r.err
     assert (dest / "_done/2026-03-01_api_cache.md").is_file()
 
 
@@ -131,24 +131,24 @@ def test_leftovers(store, env, capsys):
     write(root, "api/node_modules/x/_wip/y.md", "no se mira\n")
 
     p = wip_doc.leftovers(store)
-    assert any(f"_wip/{name}.md: el doc ya está en cairn" in x for x in p)
-    assert any("_wip/2026-03-09_api_suelto.md: un doc fuera de cairn" in x for x in p)
-    assert any(x.startswith("api/_wip/ tiene 1 .md adentro de un repo") for x in p)
+    assert any(f"_wip/{name}.md: the doc is already in cairn" in x for x in p)
+    assert any("_wip/2026-03-09_api_suelto.md: a doc outside cairn" in x for x in p)
+    assert any(x.startswith("api/_wip/ has 1 .md file(s) inside a repo") for x in p)
     assert len(p) == 3, p          # not the README, nor scripts/, nor node_modules
 
     out = run(capsys, "migrate", "wip-doc", "check", ok=False).out
-    assert "un doc fuera de cairn" in out and "3 resto(s) de wip-doc" in out
-    assert "no quedan restos" in run(capsys, "migrate", "wip-doc", "check", str(env / "nada")).out
+    assert "a doc outside cairn" in out and "3 wip-doc leftover(s)" in out
+    assert "no wip-doc leftovers" in run(capsys, "migrate", "wip-doc", "check", str(env / "nada")).out
 
 
 def test_core_check_does_not_look_at_wip_doc(store, env, capsys):
     write(env / "projects", "_wip/2026-03-09_api_suelto.md", "escrito a mano\n")
     write(env / "projects", "api/_wip/nota.md", "de antes del árbol único\n")
-    assert "[OK] todo en orden" in run(capsys, "check").out
+    assert "[OK] all in order" in run(capsys, "check").out
     config.update(lambda raw: raw.setdefault("docs", {}).update(file_dirs="scripts"))
     with Store(config.load()) as s:
-        assert tree.problems(s) == ["_wip/2026-03-09_api_suelto.md: un .md suelto — los docs van "
-                                    "en cairn; los archivos, en _wip/ + scripts/"]
+        assert tree.problems(s) == ["_wip/2026-03-09_api_suelto.md: a stray .md — docs go in cairn; "
+                                    "files, in _wip/ + scripts/"]
 
 
 def test_recognizes_the_wip_doc_hook():

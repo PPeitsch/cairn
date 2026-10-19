@@ -52,15 +52,15 @@ def pick(revs: list[Rev], rev: str) -> Rev:
     if rev.startswith("~") and rev[1:].isdigit():
         i = len(revs) - 1 - int(rev[1:])
         if i < 0:
-            raise CairnError(f"El doc tiene {len(revs)} revisión(es): no hay {rev}")
+            raise CairnError(f"The doc has {len(revs)} revision(s): there is no {rev}")
         return revs[i]
     if len(rev) < 4:
-        raise CairnError("Una revisión se nombra con al menos 4 caracteres del hash (o ~N)")
+        raise CairnError("A revision is named with at least 4 characters of its hash (or ~N)")
     found = [r for r in revs if r.event_id.startswith(rev)]
     if not found:
-        raise CairnError(f"No hay una revisión {rev} en este doc (`cairn log <doc>` las lista)")
+        raise CairnError(f"There is no revision {rev} in this doc (`cairn log <doc>` lists them)")
     if len(found) > 1:
-        raise CairnError(f"La revisión {rev} es ambigua: usá más caracteres")
+        raise CairnError(f"Revision {rev} is ambiguous: use more characters")
     return found[0]
 
 
@@ -183,18 +183,18 @@ def resolve(store: Store, ref: str, keep: str) -> tuple[Doc, int]:
     with store.writer() as w:
         doc = docs.find(store, ref)
         if not doc.divergent:
-            raise CairnError(f"{doc.name} no tiene ramas divergentes.")
+            raise CairnError(f"{doc.name} has no divergent branches.")
         branch_list = branches(store, doc)
         resolves = sorted(e.id for b in branch_list for e in b.events)
         payload: dict = {}
         if keep != "main":
             if len(keep) < 4:
-                raise CairnError("La rama se nombra con al menos 4 caracteres del hash de su punta")
+                raise CairnError("A branch is named with at least 4 characters of its tip's hash")
             found = [b for b in branch_list if b.tip.id.startswith(keep)]
             if len(found) != 1:
-                raise CairnError(f"{keep} no es la punta de una rama de {doc.name}"
-                                 + (" (ambiguo)" if found else "") + ": `cairn resolve "
-                                 f"{doc.name}` las lista")
+                raise CairnError(f"{keep} is not the tip of a branch of {doc.name}"
+                                 + (" (ambiguous)" if found else "") + ": `cairn resolve "
+                                 f"{doc.name}` lists them")
             payload = _change(doc, found[0].state)
         w.emit("resolve", doc.id, {**payload, "resolves": resolves})
     return docs.get(store, doc.id), len(resolves)

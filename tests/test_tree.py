@@ -41,13 +41,13 @@ def test_files_out_of_place(store, env, capsys):
     (root / "_done" / "viejo").mkdir(parents=True)
 
     p = tree.problems(store)
-    assert any("_wip/2026-03-09_api_suelto.md: un .md suelto" in x for x in p)
-    assert any("_wip/datos.csv no es un doc — va en _wip/ + scripts/ o validations/" in x for x in p)
-    assert any("_done/viejo/ no es una carpeta de archivos (scripts/ o validations/)" in x for x in p)
+    assert any("_wip/2026-03-09_api_suelto.md: a stray .md" in x for x in p)
+    assert any("_wip/datos.csv is not a doc — it goes in _wip/ + scripts/ or validations/" in x for x in p)
+    assert any("_done/viejo/ is not a files folder (scripts/ or validations/)" in x for x in p)
     assert len(p) == 3, p          # not the README nor scripts/
 
     out = run(capsys, "check", ok=False).out
-    assert "un .md suelto" in out and "3 problema(s)" in out
+    assert "a stray .md" in out and "3 problem(s)" in out
 
 
 def test_search_includes_scripts_and_validations_files(store, env, capsys):
@@ -65,5 +65,5 @@ def test_search_includes_scripts_and_validations_files(store, env, capsys):
     assert tree.search_files(store, "timeout", ("ref",)) == []
 
     out = run(capsys, "search", "bajó a 2").out
-    assert "archivos de scripts/ y validations/  (1)" in out
+    assert "files in scripts/ and validations/  (1)" in out
     assert "_wip/validations/api_graficos/reporte.md" in out and "│ 3: El TIMEOUT bajó a 2 s." in out

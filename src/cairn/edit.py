@@ -30,7 +30,7 @@ STATE_KEYS = {"estado", "nota"}
 
 
 def _group(estado: str) -> str:
-    return "cerrado" if estado in CLOSED_STATES else "abierto" if estado in OPEN_STATES else "?"
+    return "closed" if estado in CLOSED_STATES else "open" if estado in OPEN_STATES else "?"
 
 
 def changes(doc: Doc, new_meta: dict | None, new_body: str | None) -> dict:
@@ -49,20 +49,21 @@ def changes(doc: Doc, new_meta: dict | None, new_body: str | None) -> dict:
             payload["unset"] = unset
     set_, unset = payload.get("set", {}), payload.get("unset", [])
     if "tipo" in unset or ("tipo" in set_ and set_["tipo"] not in TIPOS_DOC):
-        raise CairnError(f"`tipo` tiene que ser uno de: {', '.join(TIPOS_DOC)}")
+        raise CairnError(f"`tipo` has to be one of: {', '.join(TIPOS_DOC)}")
     if "tipo" in set_ and (set_["tipo"] == "ref") != (doc.tipo == "ref"):
-        raise CairnError("Un doc no pasa a ser referencia (ni deja de serlo) editando el tipo: "
-                         "para eso está `promote`.")
+        raise CairnError("A doc does not become a reference (or stop being one) by editing "
+                         "its type: that is what `promote` is for.")
     if "estado" in unset and doc.tipo != "ref":
-        raise CairnError("`estado` no se puede sacar")
+        raise CairnError("`estado` cannot be removed")
     if "estado" in set_:
         if _group(set_["estado"]) == "?":
-            raise CairnError(f"Estado desconocido: {set_['estado']} (abiertos: "
+            raise CairnError(f"Unknown status: {set_['estado']} (open: "
                              f"{', '.join(sorted(OPEN_STATES))}; "
-                             f"cerrados: {', '.join(sorted(CLOSED_STATES))})")
+                             f"closed: {', '.join(sorted(CLOSED_STATES))})")
         if _group(set_["estado"]) != _group(doc.estado):
-            raise CairnError(f"`estado` no pasa de {_group(doc.estado)} a {_group(set_['estado'])} "
-                             "editando: usar close / reopen / handoff take|drop.")
+            raise CairnError(f"`estado` does not go from {_group(doc.estado)} to "
+                             f"{_group(set_['estado'])} by editing: use close / reopen / "
+                             "handoff take|drop.")
     if "body" in payload and doc.tipo == "ref" and "actualizado" not in set_:
         payload.setdefault("set", {})["actualizado"] = clock.today()
     return payload
@@ -81,11 +82,11 @@ def apply(store: Store, ref: str, text: str | None = None, set_: dict | None = N
     `set_`/`unset`: individual fields. `expected_head`: if the doc changed since then (another
     edit in between), stop instead of overwriting it."""
     if text is not None and body is not None:
-        raise CairnError("apply: `text` o `body`, no los dos")
+        raise CairnError("apply: `text` or `body`, not both")
     with store.writer() as w:
         doc = docs.find(store, ref)
         if expected_head and doc.head != expected_head:
-            raise CairnError(f"{doc.name} cambió mientras lo editabas: no se guardó nada.")
+            raise CairnError(f"{doc.name} changed while you were editing it: nothing was saved.")
         meta = None
         warnings: list[str] = []
         if text is not None:
@@ -93,8 +94,8 @@ def apply(store: Store, ref: str, text: str | None = None, set_: dict | None = N
             if meta is None:
                 body = text
             elif docs.link_paths(store, doc) != {k: _as_list(meta.get(k)) for k in LINK_KINDS}:
-                warnings.append("[nota] Los vínculos (origen, referencias, plan) no se editan a mano: "
-                                "se ignoró el cambio.")
+                warnings.append("[note] Links (origen, referencias, plan) are not edited by hand: "
+                                "the change was ignored.")
         if set_ or unset:
             meta = dict(meta if meta is not None else doc.meta)
             for k in unset or []:
@@ -116,10 +117,10 @@ def parse_assignments(items: list[str]) -> dict:
     out = {}
     for it in items:
         if "=" not in it:
-            raise CairnError(f"--set espera clave=valor: {it!r}")
+            raise CairnError(f"--set expects key=value: {it!r}")
         k, v = it.split("=", 1)
         if not k.strip():
-            raise CairnError(f"--set sin clave: {it!r}")
+            raise CairnError(f"--set without a key: {it!r}")
         out[k.strip()] = v
     return out
 
@@ -140,9 +141,9 @@ def interactive(store: Store, ref: str) -> Result:
     try:
         r = subprocess.run([*editor_command(), str(path)])
     except OSError as e:
-        raise CairnError(f"No se pudo abrir el editor: {e}") from None
+        raise CairnError(f"Could not open the editor: {e}") from None
     if r.returncode != 0:
-        raise CairnError(f"El editor salió con {r.returncode}: no se guardó nada (texto en {path})")
+        raise CairnError(f"The editor exited with {r.returncode}: nothing was saved (text in {path})")
     text = path.read_text(encoding="utf-8")
     if text == original:
         path.unlink()
@@ -151,7 +152,7 @@ def interactive(store: Store, ref: str) -> Result:
     try:
         result = apply(store, doc.id, text=text, expected_head=doc.head)
     except CairnError as e:
-        raise CairnError(f"{e}\n  Tu versión quedó en {path}") from None
+        raise CairnError(f"{e}\n  Your version is in {path}") from None
     path.unlink()
     tmpdir.rmdir()
     return result

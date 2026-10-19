@@ -14,7 +14,7 @@ FM_ORDER = ["tipo", "repo", "para", "estado", "nota", "fecha", "cerrado", "usada
             "reabierto", "actualizado", "autor", "plan", "origen", "referencias"]
 # no `#` (starts a YAML comment) and no `:`; anything that does not match is written quoted
 _PLAIN = re.compile(r"^[\w./()+áéíóúñÁÉÍÓÚÑ -]*$")
-MONTHS = ["x", "ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+MONTHS = ["x", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
 def _yaml_scalar(v) -> str:
@@ -109,10 +109,12 @@ def section_text(body: str, prefix: str) -> str:
     return COMMENT.sub("", s[1]).strip("\n").strip()
 
 
-# lines the template leaves behind that do not count as content
+# lines the template leaves behind that do not count as content (the built-in templates' and
+# those of the Spanish ones they replaced, which older docs still carry)
 _PLACEHOLDER = re.compile(
-    r"^\s*(```\w*|1\.|-|- \[ \]|\*\*Causa raíz:\*\*|# pegar salida relevante acá|"
-    r"# para retomar o re-diagnosticar)?\s*$")
+    r"^\s*(```\w*|1\.|-|- \[ \]|\*\*Root cause:\*\*|# paste relevant output here|"
+    r"# to pick it up again or diagnose it again|"
+    r"\*\*Causa raíz:\*\*|# pegar salida relevante acá|# para retomar o re-diagnosticar)?\s*$")
 
 
 def is_placeholder(text: str) -> bool:

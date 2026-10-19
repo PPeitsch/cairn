@@ -42,7 +42,7 @@ def _check_json(value, where: str = "payload") -> None:
     if value is None or isinstance(value, (bool, int, str)):
         return
     if isinstance(value, float):
-        raise EventError(f"{where}: los floats no tienen forma canónica; usar str o int")
+        raise EventError(f"{where}: floats have no canonical form; use str or int")
     if isinstance(value, list):
         for i, v in enumerate(value):
             _check_json(v, f"{where}[{i}]")
@@ -50,10 +50,10 @@ def _check_json(value, where: str = "payload") -> None:
     if isinstance(value, dict):
         for k, v in value.items():
             if not isinstance(k, str):
-                raise EventError(f"{where}: clave no string {k!r}")
+                raise EventError(f"{where}: non-string key {k!r}")
             _check_json(v, f"{where}.{k}")
         return
-    raise EventError(f"{where}: tipo no serializable {type(value).__name__}")
+    raise EventError(f"{where}: non-serializable type {type(value).__name__}")
 
 
 def canonical_json(value) -> bytes:
@@ -93,26 +93,26 @@ class Event:
     # -- validation
     def validate(self, check_id: bool = True) -> None:
         if self.v != FORMAT_VERSION:
-            raise EventError(f"versión de formato desconocida: {self.v}")
+            raise EventError(f"unknown format version: {self.v}")
         if not NODE_RE.match(self.node or ""):
-            raise EventError(f"nombre de nodo inválido: {self.node!r}")
+            raise EventError(f"invalid node name: {self.node!r}")
         if self.op not in OPS:
-            raise EventError(f"operación desconocida: {self.op!r}")
+            raise EventError(f"unknown operation: {self.op!r}")
         if not isinstance(self.doc_id, str) or not self.doc_id:
             raise EventError("falta doc_id")
         if not isinstance(self.ts, str) or not self.ts:
             raise EventError("falta ts")
         if not isinstance(self.payload, dict):
-            raise EventError("payload tiene que ser un objeto")
+            raise EventError("payload has to be an object")
         _check_json(self.payload)
         if self.op in CREATE_OPS and self.prev is not None:
-            raise EventError(f"{self.op} crea el doc: no lleva prev")
+            raise EventError(f"{self.op} creates the doc: it has no prev")
         if self.op in CHANGE_OPS and not (isinstance(self.prev, str) and _HASH_RE.match(self.prev)):
-            raise EventError(f"{self.op} necesita prev (el hash del evento anterior del doc)")
+            raise EventError(f"{self.op} needs prev (the hash of the doc's previous event)")
         if self.sig is not None and not isinstance(self.sig, str):
-            raise EventError("sig tiene que ser string")
+            raise EventError("sig has to be a string")
         if check_id and self.id != self.compute_id():
-            raise EventError(f"el id {self.id[:12]} no coincide con el contenido del evento")
+            raise EventError(f"the id {self.id[:12]} does not match the event's content")
 
     # -- serialization (one log line)
     def to_json(self) -> str:
@@ -124,9 +124,9 @@ class Event:
         try:
             d = json.loads(line)
         except ValueError as e:
-            raise EventError(f"línea que no es JSON: {e}") from None
+            raise EventError(f"line that is not JSON: {e}") from None
         if not isinstance(d, dict):
-            raise EventError("el evento no es un objeto")
+            raise EventError("the event is not an object")
         known = {"v", "node", "ts", "op", "doc_id", "payload", "prev", "sig", "id"}
         extra = set(d) - known
         if extra:

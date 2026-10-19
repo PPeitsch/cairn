@@ -32,6 +32,8 @@ def test_first_sentences():
 def test_sections_and_placeholders():
     body = "## TL;DR\n\n<!-- x -->\nHecho.\n\n---\n\n## Pendientes\n\n- [ ]\n- [ ] algo\n- [x] listo\n"
     assert section_text(body, "tl;dr") == "Hecho."
-    assert is_placeholder("```bash\n# para retomar o re-diagnosticar\n```\n")
+    assert is_placeholder("```bash\n# to pick it up again or diagnose it again\n```\n")
+    assert is_placeholder("```bash\n# para retomar o re-diagnosticar\n```\n")    # older docs
+    assert is_placeholder("1.\n\n**Causa raíz:**\n") and is_placeholder("1.\n\n**Root cause:**\n")
     assert not is_placeholder("curl x")
     assert pending_items(body) == [(11, "- [ ] algo")]

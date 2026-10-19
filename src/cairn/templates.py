@@ -3,8 +3,9 @@
 The HTML comments are the guidance for whoever fills in the doc; `search`, `weekly` and `promote`
 ignore them. These are the built-in ones: `[docs] templates = <folder>` in the config replaces
 them with that folder's (`bug.md`, `infra.md`, `plan.md`, `ref.md`, `ref_header.md`,
-`handoff.md`; any that is missing comes from here). `{titulo}` is replaced by the doc's title.
-`cairn defaults <folder>` exports them as a starting point.
+`handoff.md`; any that is missing comes from here). `{title}` is replaced by the doc's title
+(`{titulo}` too, for templates exported before it was renamed). `cairn defaults <folder>`
+exports them as a starting point.
 """
 
 from __future__ import annotations
@@ -12,146 +13,147 @@ from __future__ import annotations
 from pathlib import Path
 
 DIAG = """
-# {titulo}
+# {title}
 
 ## TL;DR
 
-<!-- 2-4 líneas: problema, causa raíz, solución. La 1ª dice QUÉ se hizo (sale en weekly). -->
+<!-- 2-4 lines: problem, root cause, fix. The first one says WHAT was done (it goes in weekly). -->
 
 ---
 
-## Contexto / topología
+## Context / topology
 
-<!-- Máquinas, rutas, repos, servicios involucrados. Incluir las trampas (cosas confusas). -->
+<!-- Machines, paths, repos, services involved. Include the traps (confusing things). -->
 
 ---
 
-## Síntomas observados
+## Symptoms observed
 
-<!-- Qué se veía, con evidencia (salidas de comandos, logs). -->
+<!-- What was seen, with evidence (command output, logs). -->
 
 ```
-# pegar salida relevante acá
+# paste relevant output here
 ```
 
 ---
 
-## Discoveries (en orden)
+## Discoveries (in order)
 
-<!-- Recorrido del diagnóstico paso a paso. Resaltar la causa raíz. -->
+<!-- The diagnosis step by step. Highlight the root cause. -->
 
 1.
 
-**Causa raíz:**
+**Root cause:**
 
 ---
 
-## Correcciones aplicadas
+## Fixes applied
 
-<!-- Qué se cambió y por qué. -->
+<!-- What was changed and why. -->
 
 ---
 
-## Pendientes / a monitorear
+## Pending / to monitor
 
 - [ ]
 
 ---
 
-## Comandos útiles de referencia
+## Useful commands
 
 ```bash
-# para retomar o re-diagnosticar
+# to pick it up again or diagnose it again
 ```
 """
 
 PLAN = """
-# {titulo}
+# {title}
 
 ## TL;DR
 
-<!-- Objetivo en 2-4 líneas: qué se construye y por qué. -->
+<!-- The goal in 2-4 lines: what is being built and why. -->
 
 ---
 
-## Contexto / problema
+## Context / problem
 
-<!-- Qué disparó la necesidad, qué hay hoy que no alcanza. -->
-
----
-
-## Alcance
-
-<!-- Qué incluye y qué explícitamente no (para no scope-creepear). -->
+<!-- What triggered the need, what exists today that falls short. -->
 
 ---
 
-## Diseño / propuesta
+## Scope
 
-<!-- La solución, con fases si el trabajo es incremental. -->
-
----
-
-## Decisiones tomadas
-
-<!-- Alternativas consideradas y por qué se descartaron, si hubo. -->
+<!-- What it includes and what it explicitly does not (to keep the scope from creeping). -->
 
 ---
 
-## Pendientes / checklist
+## Design / proposal
+
+<!-- The solution, in phases if the work is incremental. -->
+
+---
+
+## Decisions
+
+<!-- Alternatives considered and why they were dropped, if any. -->
+
+---
+
+## Pending / checklist
 
 - [ ]
 """
 
 REF = """
-# {titulo}
+# {title}
 
 ## TL;DR
 
-<!-- Qué es esta referencia y cuándo consultarla, en 1-2 líneas. -->
+<!-- What this reference is and when to look it up, in 1-2 lines. -->
 """
 
 REF_CONTENT = """
 ---
 
-## Contenido
+## Content
 
-<!-- Fichas, mapeos, tablas, diagramas, reviews: lo que se consulta, no lo que se cierra.
-     Al tocarlo, `actualizado:` se pone solo — una referencia vieja miente sin avisar. -->
+<!-- Notes, mappings, tables, diagrams, reviews: what gets looked up, not what gets closed.
+     Editing it sets `actualizado:` on its own: an old reference lies without warning. -->
 """
 
 HANDOFF = """
-# {titulo}
+# {title}
 
 ## TL;DR
 
-<!-- 1-2 líneas: qué tiene que hacer la próxima conversación. -->
+<!-- 1-2 lines: what the next conversation has to do. -->
 
 ---
 
-## Leer primero
+## Read first
 
-<!-- Qué plan leer y qué sección. Apuntar, no copiar: si el plan se corrige después, la nota no
-     queda vieja. Con `--plan <doc>`, `take` avisa si el plan cambió después de escrita la nota. -->
+<!-- Which plan to read and which section. Point to it, do not copy it: if the plan is corrected
+     later, the note does not go stale. With `--plan <doc>`, `take` warns if the plan changed
+     after the note was written. -->
 
 ---
 
-## Orden de trabajo
+## Work order
 
 1.
 
 ---
 
-## Preguntar antes de arrancar
+## Ask before starting
 
 -
 
 ---
 
-## Forma de trabajar
+## How to work
 
-<!-- Opcional: lo que no está ni en el plan ni en CLAUDE.md. Nada destructivo: la nota se archiva
-     sola al tomarla, no pide que la borren. -->
+<!-- Optional: what is neither in the plan nor in CLAUDE.md. Nothing destructive: the note is
+     archived on its own when taken, it does not ask to be deleted. -->
 """
 
 
@@ -174,4 +176,4 @@ def body(templates_dir: Path | None, kind: str, title: str) -> str:
                 text = "\n" + text          # like the built-in ones: a blank line after the front-matter
     if text is None:
         text = defaults()[name]
-    return text.replace("{titulo}", title)
+    return text.replace("{title}", title).replace("{titulo}", title)

@@ -90,21 +90,21 @@ class Channel:
     def recv(self) -> dict:
         line = self.rfile.readline()
         if not line:
-            raise ProtocolError("el otro lado cortó la conexión")
+            raise ProtocolError("the other side hung up")
         try:
             msg = json.loads(line)
         except ValueError:
-            raise ProtocolError(f"mensaje que no es JSON: {line[:80]!r}") from None
+            raise ProtocolError(f"message that is not JSON: {line[:80]!r}") from None
         if not isinstance(msg, dict):
-            raise ProtocolError("mensaje que no es un objeto")
+            raise ProtocolError("message that is not an object")
         if "error" in msg:
-            raise ProtocolError(f"el otro lado: {msg['error']}")
+            raise ProtocolError(f"the other side: {msg['error']}")
         return msg
 
     def expect(self, key: str):
         msg = self.recv()
         if key not in msg:
-            raise ProtocolError(f"se esperaba `{key}` y llegó {sorted(msg)}")
+            raise ProtocolError(f"expected `{key}` and got {sorted(msg)}")
         return msg[key]
 
 
@@ -114,10 +114,10 @@ def _hello(store: Store, **extra) -> dict:
 
 def _check_hello(msg: dict) -> str:
     if msg.get("cairn") != "sync" or msg.get("v") != PROTO:
-        raise ProtocolError(f"protocolo incompatible: {msg}")
+        raise ProtocolError(f"incompatible protocol: {msg}")
     node = msg.get("node")
     if not isinstance(node, str) or not node:
-        raise ProtocolError("saludo sin nombre de nodo")
+        raise ProtocolError("greeting without a node name")
     return node
 
 
@@ -128,7 +128,7 @@ def chunks_for(store: Store, theirs: dict, restore: bool = False) -> tuple[list[
     With `restore` it includes the other side's own log."""
     out, conflicts = [], []
     if not isinstance(theirs, dict):
-        raise ProtocolError("inventario inválido")
+        raise ProtocolError("invalid inventory")
     for node in store.log.nodes():
         if node == theirs.get("__self__") and not restore:
             continue
@@ -139,8 +139,8 @@ def chunks_for(store: Store, theirs: dict, restore: bool = False) -> tuple[list[
             if not isinstance(size, int) or size < 0 or size >= len(data):
                 continue                        # it has everything (or more: the other side sends it)
             if hashlib.sha256(data[:size]).hexdigest() != digest:
-                conflicts.append(f"{node}/{seg}: la copia del otro lado no es un prefijo de esta "
-                                 "(logs distintos con el mismo nombre de nodo)")
+                conflicts.append(f"{node}/{seg}: the other side's copy is not a prefix of this one "
+                                 "(different logs with the same node name)")
                 continue
             out.append({"node": node, "segment": seg, "offset": size,
                         "data": base64.b64encode(data[size:]).decode("ascii")})
@@ -152,12 +152,12 @@ def _validate(store: Store, node: str, data: bytes, restore: bool = False) -> in
     peer = store.config.peers.get(node)
     if node == store.config.node:
         if not restore:
-            raise ProtocolError(f"datos para el log de este mismo nodo ({node}): sólo lo escribe él")
+            raise ProtocolError(f"data for this very node's log ({node}): only it writes that log")
     elif peer is None:
-        raise ProtocolError(f"eventos de {node}, que no está autorizado acá: `cairn authorize {node} "
-                            "<clave> --no-ssh`")
+        raise ProtocolError(f"events of {node}, which is not authorized here: `cairn authorize {node} "
+                            "<key> --no-ssh`")
     if peer is not None and peer.revoked:
-        raise ProtocolError(f"eventos nuevos de {node}, revocado el {peer.revoked}")
+        raise ProtocolError(f"new events of {node}, revoked on {peer.revoked}")
     n = 0
     for raw in data.split(b"\n")[:-1]:
         if not raw.strip():
@@ -167,7 +167,7 @@ def _validate(store: Store, node: str, data: bytes, restore: bool = False) -> in
         except (EventError, UnicodeDecodeError):
             continue                            # broken line at the origin: copied, not projected
         if ev.node != node:
-            raise ProtocolError(f"evento de {ev.node} en el log de {node}")
+            raise ProtocolError(f"event of {ev.node} in the log of {node}")
         if why := store.verifier.problem(ev):
             raise ProtocolError(why)
         n += 1
@@ -184,12 +184,12 @@ def receive(store: Store, chunks: list[dict], restore: bool = False) -> tuple[in
                 node, seg, offset = c["node"], c["segment"], c["offset"]
                 data = base64.b64decode(c["data"], validate=True)
                 if not isinstance(offset, int):
-                    raise ProtocolError("offset inválido")
+                    raise ProtocolError("invalid offset")
                 n = _validate(store, node, data, restore)
                 log.append_raw(node, seg, offset, data, own=restore)
                 accepted += n
             except (KeyError, TypeError, ValueError) as e:
-                errors.append(f"bloque inválido: {e}")
+                errors.append(f"invalid chunk: {e}")
             except (ProtocolError, EventError) as e:
                 errors.append(f"{c.get('node')}/{c.get('segment')}: {e}")
     return accepted, errors
@@ -208,7 +208,7 @@ def _recv_chunks(ch: Channel) -> list[dict]:
         if msg.get("end"):
             return out
         if "chunk" not in msg:
-            raise ProtocolError(f"se esperaba un bloque y llegó {sorted(msg)}")
+            raise ProtocolError(f"expected a chunk and got {sorted(msg)}")
         out.append(msg["chunk"])
 
 
@@ -227,9 +227,9 @@ def serve(store: Store, ch: Channel, as_node: str | None = None) -> Result:
         restore = hello.get("restore") is True
         known = store.config.peers.get(peer)
         if as_node and peer != as_node:
-            raise ProtocolError(f"la clave es de {as_node} y el saludo dice {peer}")
+            raise ProtocolError(f"the key belongs to {as_node} and the greeting says {peer}")
         if known is None or known.revoked:
-            raise ProtocolError(f"{peer} no está autorizado en {store.config.node}")
+            raise ProtocolError(f"{peer} is not authorized on {store.config.node}")
         res.peer = res.remote = peer
     except ProtocolError as e:
         ch.send({"error": str(e)})
@@ -256,17 +256,17 @@ def _adopt_keys(store: Store, record, peer: str, expected: list[str] | None = No
     touching the config, if any of them cannot be checked."""
     from cairn import keys
     if not isinstance(record, dict) or not isinstance(record.get("key"), str):
-        raise ProtocolError(f"{peer} no contestó el restore (¿otra versión de cairn?)")
+        raise ProtocolError(f"{peer} did not answer the restore (another version of cairn?)")
     mine = keys.normalize_public(store.public_line())
     try:
         theirs = keys.normalize_public(record["key"])
         old = [config.OldKey(keys.normalize_public(k), str(u)) for k, u in record.get("old") or []]
     except (keys.KeyFileError, TypeError, ValueError) as e:
-        raise ProtocolError(f"{peer} mandó claves inválidas: {e}") from None
+        raise ProtocolError(f"{peer} sent invalid keys: {e}") from None
     if theirs != mine:
-        raise ProtocolError(f"{peer} tiene otra clave para {store.config.node}: si este nodo se "
-                            f"reinstaló, en {peer} `cairn authorize {store.config.node} '<cairn key>' "
-                            "--replace` y volver a probar")
+        raise ProtocolError(f"{peer} has another key for {store.config.node}: if this node was "
+                            f"reinstalled, on {peer} `cairn authorize {store.config.node} '<cairn key>' "
+                            "--replace` and try again")
     known = {k.key for k in store.config.old_keys}
     new_keys = [k for k in old if k.key not in known and k.key != mine]
     if not trust_peer:
@@ -274,17 +274,18 @@ def _adopt_keys(store: Store, record, peer: str, expected: list[str] | None = No
         offered = {keys.fingerprint(k.key) for k in old} | {keys.fingerprint(k) for k in known}
         offered.add(keys.fingerprint(mine))
         if missing := sorted(wanted - offered):
-            raise ProtocolError(f"{peer} no tiene registrada la clave anterior {', '.join(missing)} de "
-                                f"{store.config.node}: o la huella está mal anotada, o {peer} no es "
-                                "de fiar; no se restauró nada")
+            raise ProtocolError(f"{peer} has no record of the previous key {', '.join(missing)} of "
+                                f"{store.config.node}: either the fingerprint was written down wrong, "
+                                f"or {peer} cannot be trusted; nothing was restored")
         if unchecked := [k for k in new_keys if keys.fingerprint(k.key) not in wanted]:
-            listing = "\n".join(f"  {keys.fingerprint(k.key)}  (hasta {k.until[:19]})"
+            listing = "\n".join(f"  {keys.fingerprint(k.key)}  (until {k.until[:19]})"
                                 for k in unchecked)
             raise ProtocolError(
-                f"{peer} dice que {store.config.node} firmó antes con estas claves:\n{listing}\n"
-                "Compararlas con las huellas que anotaste y pasarlas con `--old-key <huella>` "
-                "(una por clave). Si alguna no es tuya, no restaurar desde este par. Sin las "
-                "huellas, `--trust-peer-keys` las acepta sin control. No se restauró nada.")
+                f"{peer} says {store.config.node} signed with these keys before:\n{listing}\n"
+                "Compare them with the fingerprints you wrote down and pass them with "
+                "`--old-key <fingerprint>` (one per key). If any is not yours, do not restore "
+                "from this peer. Without the fingerprints, `--trust-peer-keys` accepts them "
+                "unchecked. Nothing was restored.")
     if new_keys:
         merged = [*store.config.old_keys, *new_keys]
         store.config = config.update(lambda raw: raw.setdefault("node", {}).update(
@@ -297,17 +298,17 @@ def client(store: Store, ch: Channel, name: str, restore: bool = False,
            old_keys: list[str] | None = None, trust_peer_keys: bool = False) -> Result:
     res = Result(remote=name)
     if restore and store.log.segments(store.config.node):
-        raise ProtocolError(f"{store.config.node} ya tiene eventos propios: el restore es para un nodo "
-                            "que perdió sus datos y se reinicializó")
+        raise ProtocolError(f"{store.config.node} already has events of its own: restore is for a "
+                            "node that lost its data and was reinitialized")
     ch.send(_hello(store, **({"restore": True} if restore else {})))
     hello = ch.recv()
     peer = _check_hello(hello)
     res.peer = peer
     if peer == store.config.node:
-        raise ProtocolError(f"el remoto {name} es este mismo nodo ({peer})")
+        raise ProtocolError(f"the remote {name} is this very node ({peer})")
     if peer not in store.config.peers:
-        raise ProtocolError(f"el remoto {name} es el nodo {peer}, que no está autorizado acá: "
-                            f"`cairn authorize {peer} <su clave> --no-ssh`")
+        raise ProtocolError(f"the remote {name} is the node {peer}, which is not authorized here: "
+                            f"`cairn authorize {peer} <its key> --no-ssh`")
     if restore:
         _adopt_keys(store, hello.get("keys"), peer, old_keys, trust_peer_keys)
     ch.send({"inventory": _inventory(store)})
@@ -317,7 +318,7 @@ def client(store: Store, ch: Channel, name: str, restore: bool = False,
     _send_chunks(ch, chunks)
     their = ch.expect("result")
     res.sent = int(their.get("accepted") or 0)
-    res.errors += [f"{peer} rechazó: {e}" for e in their.get("errors") or []]
+    res.errors += [f"{peer} rejected: {e}" for e in their.get("errors") or []]
     res.received, errors = receive(store, _recv_chunks(ch), restore)
     res.errors += errors
     return res
@@ -344,7 +345,7 @@ def sync_remote(store: Store, remote: config.Remote, timeout: float | None = Non
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
     except OSError as e:
-        return Result(remote.name, errors=[f"no se pudo ejecutar {argv[0]}: {e}"])
+        return Result(remote.name, errors=[f"could not run {argv[0]}: {e}"])
     killed = threading.Event()
 
     def kill():
@@ -371,10 +372,10 @@ def sync_remote(store: Store, remote: config.Remote, timeout: float | None = Non
         err = proc.stderr.read().decode("utf-8", "replace").strip()
         proc.stderr.close()
     if killed.is_set():
-        res.errors = [f"se cortó por tiempo ({timeout}s)"]
+        res.errors = [f"timed out ({timeout}s)"]
     elif res.errors and err:
         # if ssh could not connect, its message says more than "the other side hung up"
-        res.errors = [e for e in res.errors if "cortó la conexión" not in e]
+        res.errors = [e for e in res.errors if "hung up" not in e]
         res.errors.append(err.splitlines()[-1])
     return res
 
@@ -384,7 +385,7 @@ def sync_all(store: Store, names: list[str] | None = None, timeout: float | None
     if names:
         missing = [n for n in names if n not in remotes]
         if missing:
-            raise CairnError(f"No hay remoto(s): {', '.join(missing)}")
+            raise CairnError(f"No such remote(s): {', '.join(missing)}")
         remotes = {n: remotes[n] for n in names}
     return [sync_remote(store, r, timeout) for r in remotes.values()]
 

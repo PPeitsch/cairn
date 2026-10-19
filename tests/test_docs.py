@@ -47,16 +47,16 @@ def test_new_stamps_the_pwd_repo(store, repo, capsys):
     assert doc.meta == {"tipo": "bug", "repo": "repo", "estado": "en_progreso", "fecha": HOY,
                         "autor": "Pablo + Claude"}
     assert doc.scope == "wip" and doc.title == "bcra — rate limit"
-    assert "## Discoveries (en orden)" in doc.body
+    assert "## Discoveries (in order)" in doc.body
 
 
 def test_new_ref_without_date_and_plan(store, repo, capsys):
     run(capsys, "new", "bcra", "endpoints", "ref")
     ref = docs.find(store, "bcra_endpoints")
     assert ref.scope == "ref" and ref.meta["actualizado"] == HOY and "estado" not in ref.meta
-    assert "## Contenido" in ref.body
+    assert "## Content" in ref.body
     run(capsys, "new", "bcra", "cache", "plan")
-    assert "## Diseño / propuesta" in docs.find(store, f"{HOY}_bcra_cache").body
+    assert "## Design / proposal" in docs.find(store, f"{HOY}_bcra_cache").body
 
 
 def test_new_cross_repo_and_explicit_repo(store, env, monkeypatch, capsys):
@@ -69,10 +69,10 @@ def test_new_cross_repo_and_explicit_repo(store, env, monkeypatch, capsys):
 
 def test_new_does_not_overwrite_and_validates(store, repo, capsys):
     run(capsys, "new", "a", "b")
-    assert "Ya existe" in run(capsys, "new", "a", "b", ok=False).err
-    assert "Tipo inválido" in run(capsys, "new", "a", "c", "otro", ok=False).err
+    assert "Already exists" in run(capsys, "new", "a", "b", ok=False).err
+    assert "Invalid type" in run(capsys, "new", "a", "c", "otro", ok=False).err
     assert "handoff new" in run(capsys, "new", "a", "c", "handoff", ok=False).err
-    assert "inválido" in run(capsys, "new", "a/b", "c", ok=False).err
+    assert "Invalid name" in run(capsys, "new", "a/b", "c", ok=False).err
 
 
 # ──────────────────────────────────────────────────────────────── close / reopen
@@ -81,26 +81,26 @@ def test_close_stops_on_pending_items_and_force(store, repo, capsys):
     run(capsys, "new", "a", "b")
     fill(store, "2026-03-10_a_b", "- [ ]", "- [ ] revisar el cron")
     err = run(capsys, "close", "2026-03-10_a_b", ok=False).err
-    assert "1 pendiente(s)" in err and "revisar el cron" in err
+    assert "1 unchecked pending item(s)" in err and "revisar el cron" in err
     assert docs.find(store, "2026-03-10_a_b").scope == "wip"
     err = run(capsys, "close", "2026-03-10_a_b", "--force").err
-    assert "Cerrado con 1 pendiente" in err
+    assert "Closed with 1 unchecked pending" in err
 
 
 def test_close_discard(store, repo, capsys):
     run(capsys, "new", "a", "plan1", "plan")
     fill(store, f"{HOY}_a_plan1", "- [ ]", "- [ ] fase 2")
     assert "--descartar" in run(capsys, "close", f"{HOY}_a_plan1", ok=False).err
-    assert "pide un motivo" in run(capsys, "close", f"{HOY}_a_plan1", "--descartar", " ", ok=False).err
+    assert "needs a reason" in run(capsys, "close", f"{HOY}_a_plan1", "--descartar", " ", ok=False).err
 
     r = run(capsys, "close", f"{HOY}_a_plan1", "--descartar", "se rediseña entero")
-    assert "Cerrado con" not in r.err
+    assert "Closed with" not in r.err
     doc = docs.find(store, f"{HOY}_a_plan1")
     assert (doc.scope, doc.estado, doc.meta["cerrado"], doc.meta["nota"]) == \
         ("done", "descartado", HOY, "se rediseña entero")
 
     out = run(capsys, "weekly").out
-    assert "(1 descartado(s))" in out and "descartado" in out.split(doc.title)[1].splitlines()[0]
+    assert "(1 discarded)" in out and "discarded" in out.split(doc.title)[1].splitlines()[0]
     assert not docs.check(store)
 
     run(capsys, "reopen", doc.name, "se retoma")
@@ -113,24 +113,24 @@ def test_close_and_reopen(store, repo, capsys):
     with store.writer() as w:
         w.emit("set_state", docs.find(store, f"{HOY}_a_plan1").id, {"set": {"nota": "baja prioridad"}})
     r = run(capsys, "close", f"{HOY}_a_plan1")
-    assert "Nota descartada" in r.err
+    assert "Note dropped" in r.err
     doc = docs.find(store, f"{HOY}_a_plan1")
     assert (doc.scope, doc.estado, doc.meta["cerrado"]) == ("done", "completado", HOY)
     assert "nota" not in doc.meta
-    assert "ya está cerrado" in run(capsys, "close", doc.name, ok=False).err
+    assert "is already closed" in run(capsys, "close", doc.name, ok=False).err
 
     r = run(capsys, "reopen", doc.name, "volvió a pasar")
     doc = docs.find(store, doc.name)
     assert (doc.scope, doc.estado, doc.meta["reabierto"], doc.meta["nota"]) == \
         ("wip", "en_progreso", HOY, "volvió a pasar")
     assert "cerrado" not in doc.meta
-    assert "no está cerrado" in run(capsys, "reopen", doc.name, ok=False).err
-    assert "Sin motivo" in (run(capsys, "close", doc.name) and run(capsys, "reopen", doc.name).err)
+    assert "is not closed" in run(capsys, "reopen", doc.name, ok=False).err
+    assert "No reason" in (run(capsys, "close", doc.name) and run(capsys, "reopen", doc.name).err)
 
 
 def test_ref_is_not_closed(store, repo, capsys):
     run(capsys, "new", "a", "r", "ref")
-    assert "no se cierra" in run(capsys, "close", "a_r", ok=False).err
+    assert "is not closed" in run(capsys, "close", "a_r", ok=False).err
 
 
 # ──────────────────────────────────────────────────────────────── promote
@@ -138,19 +138,19 @@ def test_ref_is_not_closed(store, repo, capsys):
 def test_promote_and_links_that_follow_the_doc(store, repo, capsys):
     run(capsys, "new", "bcra", "rate_limit", "bug")
     name = f"{HOY}_bcra_BUG_rate_limit"
-    assert "Nada para promover" in run(capsys, "promote", name, "bcra", "limites", ok=False).err
+    assert "Nothing to promote" in run(capsys, "promote", name, "bcra", "limites", ok=False).err
     assert not docs.name_taken(store, "bcra_limites")
 
-    fill(store, name, "# para retomar o re-diagnosticar", "curl -I https://api.example.com")
+    fill(store, name, "# to pick it up again or diagnose it again", "curl -I https://api.example.com")
     r = run(capsys, "promote", name, "bcra", "limites")
-    assert "llevadas: Comandos útiles de referencia" in r.out
-    assert "Contexto / topología (vacía)" in r.err
+    assert "carried over: Useful commands" in r.out
+    assert "Context / topology (empty)" in r.err
     ref = docs.find(store, "bcra_limites")
     meta, body = parse_front_matter(docs.render(store, ref))
     assert meta["origen"] == [f"../_wip/{name}.md"]
     assert meta["repo"] == "repo"
     assert "curl -I" in body and "## Contexto" not in body
-    assert "## Contenido" not in body          # the ref created by promote does not carry the stub
+    assert "## Content" not in body          # the ref created by promote does not carry the stub
     dmeta, _ = parse_front_matter(docs.render(store, docs.find(store, name)))
     assert dmeta["referencias"] == ["../_ref/bcra_limites.md"]
 
@@ -167,11 +167,11 @@ def test_promote_and_links_that_follow_the_doc(store, repo, capsys):
 def test_promote_section_and_append(store, repo, capsys):
     run(capsys, "new", "bcra", "cache", "plan")
     plan = f"{HOY}_bcra_cache"
-    fill(store, plan, "<!-- La solución, con fases si el trabajo es incremental. -->", "Cache LRU.")
+    fill(store, plan, "<!-- The solution, in phases if the work is incremental. -->", "Cache LRU.")
     run(capsys, "new", "bcra", "limites", "ref")
-    run(capsys, "promote", plan, "bcra", "limites", "--seccion", "diseño")
+    run(capsys, "promote", plan, "bcra", "limites", "--seccion", "design")
     ref = docs.find(store, "bcra_limites")
-    assert "## Contenido" in ref.body            # the existing one keeps its content
+    assert "## Content" in ref.body            # the existing one keeps its content
     assert ref.body.rstrip().endswith("Cache LRU.")
     assert ref.links == [["origen", docs.find(store, plan).id]]
 
@@ -182,7 +182,8 @@ def test_promote_section_and_append(store, repo, capsys):
 def poblado(store, repo, capsys):
     run(capsys, "new", "api", "timeout", "bug")
     name = f"{HOY}_api_BUG_timeout"
-    tldr = "<!-- 2-4 líneas: problema, causa raíz, solución. La 1ª dice QUÉ se hizo (sale en weekly). -->"
+    tldr = ("<!-- 2-4 lines: problem, root cause, fix. The first one says WHAT was done (it goes in "
+            "weekly). -->")
     fill(store, name, tldr,
          "Se subió el timeout a 30 s. El server tardaba más en fin de mes. Tercera oración.")
     run(capsys, "close", name, "--force")
@@ -204,50 +205,50 @@ def test_list_by_repo(poblado, capsys, monkeypatch):
     monkeypatch.setenv("CAIRN_NOW", "2026-03-15T12:00:00+00:00")
     run(capsys, "handoff", "new", "api", "seguir")
     out = run(capsys, "list", "--por-repo").out
-    assert out.splitlines()[0].startswith("3 doc(s) en 3 repo(s)")
+    assert out.splitlines()[0].startswith("3 doc(s) in 3 repo(s)")
     assert "repo (1)\n" in out and "otro (1)\n" in out and "varios (1)\n" in out
-    assert (f"  {HOY}_api_abierto  [infra · abierto · modificado {HOY}, hace 5 día(s)]") in out
-    assert "handoffs pendientes:\n  2026-03-15_api_HANDOFF_seguir" in out
+    assert (f"  {HOY}_api_abierto  [infra · open · modified {HOY}, 5 day(s) ago]") in out
+    assert "pending handoffs:\n  2026-03-15_api_HANDOFF_seguir" in out
     fill(poblado, f"{HOY}_otra_cosa", "## TL;DR", "## TL;DR\n\nalgo")     # the last one touched
     grupos = [ln for ln in run(capsys, "list", "--por-repo").out.splitlines() if ln.endswith("(1)")]
     assert grupos[0] == "otro (1)"
-    assert "modificado 2026-03-15, hoy" in run(capsys, "list", "--por-repo").out
+    assert "modified 2026-03-15, today" in run(capsys, "list", "--por-repo").out
     assert run(capsys, "list").out.splitlines()[0] == f"{HOY}_otra_cosa"   # the flat list does not change
 
 
 def test_search(poblado, capsys):
     out = run(capsys, "search", "TIMEOUT a 30").out
-    assert "1 doc(s) de 3" in out
-    assert "cerrado 10 mar" in out and f"_done/{HOY}_api_BUG_timeout.md" in out
+    assert "1 doc(s) of 3" in out
+    assert "closed 10 Mar" in out and f"_done/{HOY}_api_BUG_timeout.md" in out
     assert "Se subió el timeout a 30 s." in out
     assert "━━━━━  repo  (1)" in out
-    assert "sin coincidencias" in run(capsys, "search", "timeout", "ref").out
-    assert "Regex inválida" in run(capsys, "search", "(", ok=False).err
+    assert "no matches" in run(capsys, "search", "timeout", "ref").out
+    assert "Invalid regex" in run(capsys, "search", "(", ok=False).err
     out = run(capsys, "search", "--fts", "tardaba").out
     assert f"_done/{HOY}_api_BUG_timeout.md" in out
-    assert "«tardaba»" in out and "1 doc(s), por relevancia\n" in out      # the snippet, not the TL;DR
+    assert "«tardaba»" in out and "1 doc(s), by relevance\n" in out      # the snippet, not the TL;DR
     hits, total = docs.search_fts(poblado, "api", limit=2)                 # all three docs are api's
     assert len(hits) == 2 and total == 3
-    assert "se muestran los 2 más relevantes" in docs.fts_header("api", hits, total)
-    assert "inválida" in run(capsys, "search", "--fts", '"', ok=False).err
+    assert "showing the 2 most relevant" in docs.fts_header("api", hits, total)
+    assert "Invalid FTS query" in run(capsys, "search", "--fts", '"', ok=False).err
 
 
 def test_weekly(poblado, capsys, monkeypatch):
     out = run(capsys, "weekly").out
-    assert "1 trabajos cerrados" in out and "[bug]   1 bugs" in out
+    assert "1 pieces of work closed" in out and "[bug]   1 bugs" in out
     assert "Se subió el timeout a 30 s. El server tardaba más en fin de mes." in out
     assert "Tercera" not in out
     assert "Tercera oración." in run(capsys, "weekly", "7", "full").out
     monkeypatch.setenv("CAIRN_NOW", "2026-04-10T12:00:00+00:00")
-    assert "0 trabajos cerrados" in run(capsys, "weekly").out
+    assert "0 pieces of work closed" in run(capsys, "weekly").out
 
 
 def test_check(poblado, capsys):
-    assert "[OK] todo en orden" in run(capsys, "check").out
+    assert "[OK] all in order" in run(capsys, "check").out
     with poblado.writer() as w:
         w.emit("set_state", docs.find(poblado, f"{HOY}_api_abierto").id, {"set": {"estado": "raro"}})
     out = run(capsys, "check", ok=False).out
-    assert "estado 'raro'" in out
+    assert "status 'raro'" in out
 
 
 # ──────────────────────────────────────────────────────────────── handoffs
@@ -269,13 +270,13 @@ def test_handoff_new_and_take_archives(store, repo, capsys):
     meta, _ = parse_front_matter(docs.render(store, h))
     assert meta["plan"] == [f"../_wip/{HOY}_repo_feature.md"]
     assert (meta["tipo"], meta["estado"]) == ("handoff", "pendiente")
-    assert f"handoffs pendientes:\n  {name}" in run(capsys, "list").out
+    assert f"pending handoffs:\n  {name}" in run(capsys, "list").out
 
     out = run(capsys, "handoff", "take").out
-    assert f"Handoff tomado: {name}" in out and "## Leer primero" in out
+    assert f"Handoff taken: {name}" in out and "## Read first" in out
     h = docs.find(store, name)
     assert (h.scope, h.estado, h.meta["usada"]) == ("done", "usada", HOY)
-    assert "ya no está pendiente" in run(capsys, "handoff", "take", name, ok=False).err
+    assert "is no longer pending" in run(capsys, "handoff", "take", name, ok=False).err
     # taken by mistake: back to pending
     run(capsys, "reopen", name)
     h = docs.find(store, name)
@@ -284,21 +285,21 @@ def test_handoff_new_and_take_archives(store, repo, capsys):
 
 def test_handoff_drop_and_close_is_refused(store, repo, capsys):
     name = run(capsys, "handoff", "new", "repo", "x").out.strip()
-    assert "se archiva con `handoff take`" in run(capsys, "close", name, ok=False).err
+    assert "archived with `handoff take`" in run(capsys, "close", name, ok=False).err
     run(capsys, "handoff", "drop", name, "ya no aplica")
     h = docs.find(store, name)
     assert (h.estado, h.meta["descartada"], h.meta["nota"]) == ("descartada", HOY, "ya no aplica")
-    assert "Sin handoffs pendientes" in run(capsys, "handoff", "list").out
-    assert "no es un handoff" in (run(capsys, "new", "a", "b") and
+    assert "No pending handoffs" in run(capsys, "handoff", "list").out
+    assert "is not a handoff" in (run(capsys, "new", "a", "b") and
                                   run(capsys, "handoff", "drop", f"{HOY}_a_b", ok=False).err)
 
 
 def test_handoff_take_without_name_with_several_or_none(store, repo, capsys):
-    assert "No hay handoffs pendientes para repo" in run(capsys, "handoff", "take", ok=False).err
+    assert "No pending handoffs for repo" in run(capsys, "handoff", "take", ok=False).err
     run(capsys, "handoff", "new", "repo", "a")
     run(capsys, "handoff", "new", "repo", "b")
     err = run(capsys, "handoff", "take", ok=False).err
-    assert "Hay 2 handoffs pendientes para repo; decí cuál" in err
+    assert "There are 2 pending handoffs for repo; say which one" in err
 
 
 def test_handoff_hook_by_repo_and_source(store, repo, env, capsys, monkeypatch):
@@ -309,14 +310,14 @@ def test_handoff_hook_by_repo_and_source(store, repo, env, capsys, monkeypatch):
     run(capsys, "handoff", "new", "repo", "a")
     run(capsys, "handoff", "new", "x", "cruzado", "--para", "repo", "--para", "otro")
     ctx = hook_ctx(capsys, monkeypatch, repo / ".")
-    assert "2 handoff(s) pendiente(s) para repo" in ctx and "preguntale si la toma" in ctx
+    assert "2 pending handoff(s) for repo" in ctx and "ask whether to take it" in ctx
     assert "cairn handoff take" in ctx
-    assert "1 handoff(s) pendiente(s) para otro" in hook_ctx(capsys, monkeypatch, otro)
-    assert "2 handoff(s) pendiente(s) para la raíz" in hook_ctx(capsys, monkeypatch, env / "projects")
+    assert "1 pending handoff(s) for otro" in hook_ctx(capsys, monkeypatch, otro)
+    assert "2 pending handoff(s) for the projects root" in hook_ctx(capsys, monkeypatch, env / "projects")
     assert hook_ctx(capsys, monkeypatch, repo, source="resume") == ""
     assert hook_ctx(capsys, monkeypatch, repo, source="compact") == ""
     assert "handoff(s)" in hook_ctx(capsys, monkeypatch, repo, source="clear")
-    assert "2 handoff(s)" in hook_ctx(capsys, monkeypatch, repo, raw="no es json")
+    assert "2 pending handoff(s)" in hook_ctx(capsys, monkeypatch, repo, raw="no es json")
 
 
 def test_handoff_hook_without_init_does_not_break(env, capsys, monkeypatch):
@@ -329,7 +330,7 @@ def test_handoff_hook_in_worktree_outside_projects(store, repo, tmp_path_factory
     wt = tmp_path_factory.mktemp("afuera") / "wt"
     subprocess.run([*git, "worktree", "add", "-q", str(wt)], check=True)
     run(capsys, "handoff", "new", "repo", "a")
-    assert "para repo" in hook_ctx(capsys, monkeypatch, wt)
+    assert "for repo" in hook_ctx(capsys, monkeypatch, wt)
 
 
 def test_stale_handoff_and_modified_plan(store, repo, capsys, monkeypatch):
@@ -338,11 +339,11 @@ def test_stale_handoff_and_modified_plan(store, repo, capsys, monkeypatch):
     name = run(capsys, "handoff", "new", "repo", "a", "--plan", f"{HOY}_repo_feature").out.strip()
     monkeypatch.setenv("CAIRN_NOW", "2026-03-28T12:00:00+00:00")
     fill(store, f"{HOY}_repo_feature", "- [ ]", "- [ ] algo")      # the plan was touched afterwards
-    assert "hace 18 día(s); VIEJA" in run(capsys, "handoff", "list").out
-    assert "sin tomar hace 18 días" in run(capsys, "check", ok=False).out
+    assert "18 day(s) old; OLD" in run(capsys, "handoff", "list").out
+    assert "not taken for 18 days" in run(capsys, "check", ok=False).out
     out = run(capsys, "handoff", "take", name).out
-    assert "puede haber quedado vieja" in out
-    assert "se modificó después de escrita la nota" in out
+    assert "may be out of date" in out
+    assert "changed after the note was written" in out
 
 
 def test_find_by_id_and_ambiguous(store, repo, capsys):
@@ -350,5 +351,5 @@ def test_find_by_id_and_ambiguous(store, repo, capsys):
     doc = docs.find(store, f"{HOY}_a_b")
     assert docs.find(store, doc.id[:8]).id == doc.id
     assert docs.find(store, f"../_wip/{HOY}_a_b.md").id == doc.id
-    with pytest.raises(CairnError, match="No encontrado"):
+    with pytest.raises(CairnError, match="Not found"):
         docs.find(store, "nada")

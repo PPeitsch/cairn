@@ -45,9 +45,9 @@ def test_default_author_is_not_hardcoded(env, monkeypatch, tmp_path):
 
 
 def test_invalid_values(cfg):
-    with pytest.raises(config.ConfigError, match="número"):
+    with pytest.raises(config.ConfigError, match="number"):
         set_cfg(sync={"timeout": "rápido"})
-    with pytest.raises(config.ConfigError, match="mayor que 0"):
+    with pytest.raises(config.ConfigError, match="greater than 0"):
         set_cfg(docs={"handoff_stale_days": "0"})
     with pytest.raises(config.ConfigError, match="mcp_name"):
         set_cfg(claude_code={"mcp_name": "con espacio"})
@@ -56,16 +56,16 @@ def test_invalid_values(cfg):
 def test_custom_templates(cfg, env, capsys):
     d = env / "plantillas"
     d.mkdir()
-    (d / "bug.md").write_text("# {titulo}\n\n## Qué pasó\n")
-    (d / "handoff.md").write_text("\n# {titulo}\n\n## Para la próxima\n")
+    (d / "bug.md").write_text("# {titulo}\n\n## Qué pasó\n")           # templates exported before {title}
+    (d / "handoff.md").write_text("\n# {title}\n\n## Para la próxima\n")
     set_cfg(docs={"templates": str(d)})
     with Store(config.load()) as s:
         b = docs.new(s, "api", "lento", "bug", "api").doc
         assert b.body == "\n# api — lento\n\n## Qué pasó\n"
         p = docs.new(s, "api", "cache", "plan", "api").doc     # no file: the built-in one
-        assert "## Diseño / propuesta" in p.body
+        assert "## Design / proposal" in p.body
         h = docs.handoff_new(s, "api", "sigue", repo="api").doc
-        assert "## Para la próxima" in h.body
+        assert h.body == "\n# api — handoff: sigue\n\n## Para la próxima\n"
 
 
 def test_defaults_exports_usable_files(cfg, env, capsys):
@@ -73,7 +73,7 @@ def test_defaults_exports_usable_files(cfg, env, capsys):
     assert "templates = " in out and "instructions = " in out
     assert (env / "mio" / "templates" / "plan.md").read_text() == templates.PLAN.lstrip("\n")
     assert (env / "mio" / "mcp_instructions.md").read_text() == mcp_server.INSTRUCTIONS
-    assert "ya existe" in run(capsys, "defaults", str(env / "mio")).err
+    assert "already exists" in run(capsys, "defaults", str(env / "mio")).err
     set_cfg(docs={"templates": str(env / "mio" / "templates")})
     with Store(config.load()) as s:
         assert docs.new(s, "api", "x", "plan", "api").doc.body == \
@@ -93,9 +93,9 @@ def test_stale_handoff_is_configurable(cfg, capsys):
     import os
     os.environ["CAIRN_NOW"] = "2026-03-15T12:00:00+00:00"
     try:
-        assert "VIEJA" not in run(capsys, "handoff", "list", "--all").out
+        assert "OLD" not in run(capsys, "handoff", "list", "--all").out
         set_cfg(docs={"handoff_stale_days": "3"})
-        assert "VIEJA" in run(capsys, "handoff", "list", "--all").out
+        assert "OLD" in run(capsys, "handoff", "list", "--all").out
     finally:
         os.environ["CAIRN_NOW"] = "2026-03-10T12:00:00+00:00"
 
@@ -108,7 +108,7 @@ def test_file_dirs_are_configurable(cfg, env):
         assert tree.problems(s) == [] and tree.search_files(s, "aguja") == []
     set_cfg(docs={"file_dirs": "scripts"})
     with Store(config.load()) as s:
-        assert any("_wip/notas/ no es una carpeta de archivos" in p for p in tree.problems(s))
+        assert any("_wip/notas/ is not a files folder" in p for p in tree.problems(s))
         assert tree.search_files(s, "aguja") == []
     set_cfg(docs={"file_dirs": "scripts, notas"})
     with Store(config.load()) as s:

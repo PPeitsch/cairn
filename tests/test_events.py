@@ -38,7 +38,7 @@ def test_roundtrip_json():
 
 def test_tampered_payload_is_detected():
     line = make().to_json().replace('"tipo":"plan"', '"tipo":"bug"')
-    with pytest.raises(EventError, match="no coincide"):
+    with pytest.raises(EventError, match="does not match"):
         Event.from_json(line)
 
 
