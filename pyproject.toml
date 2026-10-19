@@ -21,6 +21,7 @@ cairn = "cairn.cli:main"
 [project.optional-dependencies]
 serve = [
     "markdown-it-py>=3",
+    "pygments>=2.17",
 ]
 
 [tool.hatch.version]
@@ -29,6 +30,7 @@ path = "src/cairn/__init__.py"
 [dependency-groups]
 dev = [
     "markdown-it-py>=3",
+    "pygments>=2.17",
     "pytest>=8",
 ]
 

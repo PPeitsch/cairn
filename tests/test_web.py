@@ -1,5 +1,6 @@
 """`cairn serve`: the views as HTML (without a server) and the server itself on a free port."""
 
+import json
 import threading
 import urllib.error
 import urllib.request
@@ -14,19 +15,35 @@ def _plan(store, topic="cache", repo="api"):
     return docs.new(store, "api", topic, "plan", repo).doc
 
 
-def test_index_groups_by_repo_and_filters(store):
+def _main(body):
+    return body.split("<main>")[1].split("</main>")[0]
+
+
+def test_home_counts_open_work_by_repo_handoffs_and_activity(store):
     a = _plan(store, "cache", "api")
     b = _plan(store, "colas", "web")
-    docs.handoff_new(store, "api", "seguir", to=["api"], plans=[a.name], repo="api")
+    h = docs.handoff_new(store, "api", "seguir", to=["api"], plans=[a.name], repo="api").doc
     status, body = web.route(store, "/")
     assert status == 200
-    assert body.index("pending handoffs") < body.index("<h2>api (1)</h2>")
-    assert a.name in body and b.name in body and "to: api" in body
-    _, only_web = web.route(store, "/?repo=web")
-    assert b.name in only_web and a.name not in only_web
-    _, refs = web.route(store, "/?scope=ref")
+    main = _main(body)
+    assert '<div class="n">2</div><div class="l">open work · 2 plan</div>' in main
+    assert '<div class="n">1</div><div class="l">pending handoffs</div>' in main
+    assert 'href="/docs?repo=api">all</a>' in main and 'href="/docs?repo=web">all</a>' in main
+    assert all(f'href="/doc/{d.name}"' in main for d in (a, b, h))
+    assert "to: api" in main and "handoff created" in main
+    assert 'data-state="3"' in body                                  # events, for the reload offer
+
+
+def test_list_filters_with_counts(store):
+    a = _plan(store, "cache", "api")
+    b = _plan(store, "colas", "web")
+    _, body = web.route(store, "/docs")
+    assert '<a class="chip" href="/docs?repo=web">web<span class="count">1</span></a>' in body
+    _, only_web = web.route(store, "/docs?repo=web")
+    assert b.name in _main(only_web) and f'href="/doc/{a.name}"' not in only_web
+    _, refs = web.route(store, "/docs?scope=ref")
     assert "Nothing here." in refs
-    assert web.route(store, "/?scope=nope")[0] == 404
+    assert web.route(store, "/docs?scope=nope")[0] == 404
 
 
 def test_a_doc_as_text_with_outline_links_and_checklist(store):
@@ -36,56 +53,72 @@ def test_a_doc_as_text_with_outline_links_and_checklist(store):
     edit.apply(store, a.id, text=text)
     status, body = web.route(store, f"/doc/{a.name}?view=text")
     assert status == 200
-    assert f'<a href="/doc/{b.name}">{b.name}</a>' in body        # another doc, linked
-    assert f'href="/doc/{a.name}"' not in body.split('<pre class="text">')[1]      # not itself
-    assert 'class="todo"' in body and 'class="done"' in body
-    assert '<span class="h">## TL;DR</span>' in body
-    assert '>TL;DR</a>' in body                                    # in the outline
+    pre = body.split('<pre class="text">')[1].split("</pre>")[0]
+    assert f'<a href="/doc/{b.name}">{b.name}</a>' in pre                  # another doc, linked
+    assert f'href="/doc/{a.name}"' not in pre                              # not itself
+    assert 'class="todo"' in pre and 'class="done"' in pre
+    assert '<span class="h">## TL;DR</span>' in pre
+    assert '<a class="l2" href="#L11">TL;DR</a>' in body                   # the outline
     assert f'href="/doc/{a.name}/log"' in body
+    assert 'title="1 of 2 checklist items done"' in body
+    assert f'data-copy="cairn edit {a.name}"' in body
 
 
 def test_a_doc_rendered_as_markdown(store):
     a = _plan(store)
     b = _plan(store, "colas")
     text = docs.render(store, a).replace("- [ ]", f"- [ ] seguir con `{b.name}`\n- [x] hecho") + (
-        f"\n| a | b |\n|---|---|\n| [ver](../_wip/{b.name}.md) | x |\n\n<b>crudo</b>\n")
+        f"\n| a | b |\n|---|---|\n| [ver](../_wip/{b.name}.md) | x |\n\n<b>crudo</b>\n"
+        "\n```python\ndef f():\n    return 1\n```\n\n```mermaid\nflowchart LR\n  A --> B\n```\n")
     edit.apply(store, a.id, text=text)
     _, body = web.route(store, f"/doc/{a.name}")
-    assert '<details class="fm">' in body and "<table>" in body
+    assert '<details class="fm">' in body and '<div class="table-wrap"><table>' in body
     assert f'<code><a href="/doc/{b.name}">{b.name}</a></code>' in body     # a name in `code`
     assert f'<a href="/doc/{b.name}">ver</a>' in body                       # a tree path
     assert '<li class="task"><span class="box"></span>seguir' in body
     assert '<li class="task done"><span class="box on"></span>hecho' in body
-    assert '<h2 id="L11">TL;DR</h2>' in body and 'href="#L11"' in body       # outline anchors
+    assert '<h2 id="L11">TL;DR<a class="anchor" href="#L11">#</a></h2>' in body
     assert "<b>crudo</b>" not in body and "&lt;b&gt;crudo&lt;/b&gt;" in body
-    assert "<!--" not in body.split("<main>")[1]                            # template comments
-    assert f'href="/doc/{a.name}?view=text">as text</a>' in body
+    assert "<!--" not in _main(body)                                       # template comments
+    assert '<span class="lang">python</span>' in body and '<span class="k">def</span>' in body
+    assert '<pre class="mermaid">flowchart LR\n  A --&gt; B\n</pre>' in body
+    assert f'href="/doc/{a.name}?view=text">text</a>' in body
 
 
 def test_without_markdown_it_it_stays_as_text(store, monkeypatch):
     a = _plan(store)
     monkeypatch.setattr(web, "MarkdownIt", None)
     _, body = web.route(store, f"/doc/{a.name}")
-    assert '<pre class="text">' in body and "as text</a>" not in body and "rendered</a>" not in body
+    assert '<pre class="text">' in body and "?view=text" not in body
 
 
 def test_links_both_ways(store):
     plan = _plan(store)
     h = docs.handoff_new(store, "api", "seguir", to=["api"], plans=[plan.name], repo="api").doc
     _, body = web.route(store, f"/doc/{plan.name}")
-    assert f'<a href="/doc/{h.name}">{h.name}</a> → plan' in body
+    assert f'<span class="k">plan (from)</span><a href="/doc/{h.name}">' in body
     _, body = web.route(store, f"/doc/{h.name}")
-    assert f'plan → <a href="/doc/{plan.name}">{plan.name}</a>' in body
+    assert f'<span class="k">plan</span><a href="/doc/{plan.name}">' in body
 
 
 def test_history_and_a_revision(store):
     a = _plan(store)
     edit.apply(store, a.id, set_={"note": "baja prioridad"})
     status, body = web.route(store, f"/doc/{a.name}/log")
-    assert status == 200 and "(2 revisions)" in body
+    assert status == 200 and "2 revisions" in body
     assert '<span class="add">+note: baja prioridad</span>' in body
+    assert body.count("<details") == 2 and body.count('<details class="card rev op-set_state" open>') == 1
     _, old = web.route(store, f"/doc/{a.name}@~1")
     assert "Revision <code>" in old and "baja prioridad" not in old
+
+
+def test_activity_by_day(store):
+    a = _plan(store)
+    edit.apply(store, a.id, set_={"note": "x"})
+    status, body = web.route(store, "/activity")
+    assert status == 200 and '<li class="day">' in body
+    assert body.index(">state changed<") < body.index(">created<")                # newest first
+    assert web.route(store, "/activity?n=0")[0] == 404
 
 
 def test_everything_from_the_docs_is_escaped(store):
@@ -113,20 +146,28 @@ def test_the_server_answers_on_localhost(cfg, store):
     a = _plan(store)
     server = web.make_server(0, lambda: Store(config.load()))
     assert server.server_address[0] == "127.0.0.1"
-    port = server.server_address[1]
+    base = f"http://127.0.0.1:{server.server_address[1]}"
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/doc/{a.name}") as r:
+        with urllib.request.urlopen(f"{base}/doc/{a.name}") as r:
             assert r.status == 200 and "text/html" in r.headers["Content-Type"]
             assert a.name in r.read().decode()
-        try:
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/doc/no_existe")
-            raise AssertionError("expected a 404")
-        except urllib.error.HTTPError as e:
-            assert e.code == 404
+        for path, ctype in (("/static/style.css", "text/css"), ("/static/app.js", "text/javascript")):
+            with urllib.request.urlopen(base + path) as r:
+                assert ctype in r.headers["Content-Type"] and len(r.read()) > 1000
+        for path in ("/doc/no_existe", "/static/..%2Fweb.py", "/static/nada.js"):
+            try:
+                urllib.request.urlopen(base + path)
+                raise AssertionError(f"expected a 404 for {path}")
+            except urllib.error.HTTPError as e:
+                assert e.code == 404
+        with urllib.request.urlopen(f"{base}/api/state") as r:
+            before = json.loads(r.read())["events"]
         # a doc written after the server started shows up without restarting it
         b = _plan(store, "nuevo")
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/") as r:
+        with urllib.request.urlopen(f"{base}/api/state") as r:
+            assert json.loads(r.read())["events"] == before + 1
+        with urllib.request.urlopen(f"{base}/docs") as r:
             assert b.name in r.read().decode()
     finally:
         server.shutdown()

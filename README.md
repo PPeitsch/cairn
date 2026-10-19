@@ -159,7 +159,8 @@ cairn --version
 ```
 
 With `"cairn[serve] @ git+https://github.com/PPeitsch/cairn"` instead, `cairn serve` also renders
-docs as markdown (it adds `markdown-it-py`); without it, it shows them as text.
+docs as markdown, highlights code and draws mermaid diagrams (it adds `markdown-it-py` and
+`pygments`); without it, it shows them as text.
 
 ## Usage
 
@@ -192,13 +193,26 @@ cairn serve [--port N] [--open]             # read-only web view on 127.0.0.1 (d
 
 ### Browsing in the browser
 
-`cairn serve` shows the docs in a local web page: the open queue grouped by repo (filtered by
-scope, type and repo), each doc with its outline, its links both ways and the names of other docs
-turned into links, its history with the diff of each revision, `weekly` and full-text search. A
-doc is rendered as markdown with the `serve` extra installed (raw HTML in a doc is shown as text,
-never run), and as the text it is stored as otherwise or with "as text". It only reads, listens only on `127.0.0.1` and opens the database
-on each request, so whatever a sync brings shows up on reload. To browse another node, tunnel:
-`ssh -L 8737:localhost:8737 <node>` and `cairn serve` there.
+`cairn serve` opens a local web view of the docs:
+
+- **Home**: open work grouped by repo (with checklist progress and the docs that went quiet),
+  pending handoffs, what closed this week and the latest activity.
+- **Lists** of open, closed and reference docs, filtered by scope, type and repo.
+- **A doc**: its status and facts, the doc itself, an outline that follows the scroll, its links
+  both ways, its checklist progress, and the `cairn show` / `cairn edit` commands to copy. The
+  names of other docs become links.
+- **History** of a doc as a timeline with the diff of each revision; **Activity** for every
+  change on the node, by day; **Weekly**; full-text **search** (`/` focuses it).
+
+With the `serve` extra, docs are rendered as markdown, code blocks are highlighted and
+`mermaid` blocks are drawn as diagrams; without it (or with "text"), a doc is shown as the text
+it is stored as. Raw HTML in a doc is shown as text, never run. Mermaid is loaded from a CDN
+only on pages that have a diagram; without network the diagram's source is shown instead.
+Light and dark follow the system, or the toggle.
+
+It only reads, listens only on `127.0.0.1` and opens the database on each request, so whatever
+a sync brings is there on reload (the page offers it when it notices). To browse another node,
+tunnel: `ssh -L 8737:localhost:8737 <node>` and `cairn serve` there.
 
 ### Sync between nodes
 
