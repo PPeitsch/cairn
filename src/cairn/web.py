@@ -5,9 +5,11 @@ The views are functions that take a store and return HTML, so they are tested wi
 request opens the store, reads and closes it, like any CLI command: what the last sync brought
 shows up on reload. Nothing here writes events.
 
-Docs are shown as they are stored and edited, as text (front-matter included, so line numbers
-match `show` and `search`), with a few touches of its own: an outline, headings with anchors,
-checklist items marked, and the names of other docs turned into links.
+A doc is shown rendered as markdown when `markdown-it-py` is installed (`cairn[serve]`), and
+otherwise, or with `?view=text`, as it is stored and edited: as text, front-matter included, so
+line numbers match `show` and `search`, with an outline, headings with anchors and checklist
+items marked. In both, the names of other docs become links, and headings get the same anchor
+(`L<line>`), so the outline works for either.
 """
 
 from __future__ import annotations
@@ -23,8 +25,13 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from cairn import config, docs, history, reading
 from cairn.docs import Doc
-from cairn.markdown import first_sentences
+from cairn.markdown import COMMENT, first_sentences
 from cairn.store import CairnError, Store
+
+try:
+    from markdown_it import MarkdownIt
+except ImportError:         # without `cairn[serve]`, docs are shown only as text
+    MarkdownIt = None
 
 DEFAULT_PORT = 8737
 
@@ -49,6 +56,7 @@ input, select, button { font: inherit; color: var(--fg); background: var(--panel
   border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
 main { max-width: 1180px; margin: 0 auto; padding: 16px; }
 h1 { font-size: 1.4em; margin: 4px 0 12px; }
+h1 code { font: .85em ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 h2 { font-size: 1.05em; margin: 24px 0 6px; color: var(--muted); font-weight: 600; }
 .muted { color: var(--muted); }
 .tag { display: inline-block; padding: 0 7px; margin: 0 4px 4px 0; border: 1px solid var(--line);
@@ -79,6 +87,30 @@ pre .hunk { color: var(--muted); }
 mark { background: var(--mark); color: inherit; }
 .notice { padding: 8px 12px; border: 1px solid var(--todo); border-radius: 6px; margin-bottom: 12px; }
 .rev { border-top: 1px solid var(--line); padding: 10px 0; }
+.md { max-width: 52em; overflow-wrap: anywhere; }
+.md h1 { display: none; }
+.md h2 { font-size: 1.25em; color: var(--fg); margin: 28px 0 8px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--line); }
+.md h3 { font-size: 1.08em; margin: 20px 0 6px; }
+.md h4, .md h5, .md h6 { font-size: 1em; margin: 16px 0 4px; }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 20px 0; }
+.md code { font: .9em ui-monospace, "SF Mono", Menlo, Consolas, monospace; background: var(--panel);
+  padding: 1px 4px; border-radius: 4px; }
+.md pre { background: var(--panel); padding: 10px 12px; border-radius: 6px; overflow-x: auto;
+  white-space: pre; }
+.md pre code { background: none; padding: 0; }
+.md table { border-collapse: collapse; margin: 8px 0; display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--line); padding: 4px 8px; text-align: left;
+  vertical-align: top; overflow-wrap: normal; min-width: 5em; }
+.md th { background: var(--panel); }
+.md blockquote { margin: 8px 0; padding: 0 12px; border-left: 3px solid var(--line);
+  color: var(--muted); }
+.md li.task { list-style: none; margin-left: -1.3em; }
+.md li.task.done { color: var(--done); }
+.box { display: inline-block; width: .8em; height: .8em; border: 1.5px solid var(--todo);
+  border-radius: 2px; margin-right: .45em; vertical-align: -.05em; }
+.box.on { border-color: var(--done); background: var(--done); }
+details.fm { margin: 4px 0 8px; color: var(--muted); font-size: .9em; }
 """
 
 
@@ -206,6 +238,67 @@ def text_html(text: str, names: set[str], self_name: str = "") -> str:
     return '<pre class="text">' + "".join(out) + "</pre>"
 
 
+def _md_inline(children, names: set[str], self_name: str) -> None:
+    """Inside a paragraph, heading or cell: links to `../_ref/x.md` and bare doc names (in text
+    or `code`) point at the doc's page. Never inside a link already."""
+    in_link = 0
+    for c in children:
+        if c.type == "link_open":
+            in_link += 1
+            href = c.attrGet("href") or ""
+            name = docs.normalize_ref(href) if "://" not in href and not href.startswith("#") else ""
+            if name in names:
+                c.attrSet("href", doc_url(name))
+        elif c.type == "link_close":
+            in_link -= 1
+        elif in_link:
+            continue
+        elif c.type == "text":
+            c.type, c.content = "html_inline", _linked(c.content, names, self_name)
+        elif c.type == "code_inline":
+            c.type, c.content = "html_inline", f"<code>{_linked(c.content, names, self_name)}</code>"
+
+
+def markdown_html(text: str, names: set[str], self_name: str = "") -> str | None:
+    """The doc rendered as markdown (None without `markdown-it-py`). Raw HTML in a doc is shown
+    as text, not rendered; template comments (`<!-- -->`) are left out."""
+    if MarkdownIt is None:
+        return None
+    lines = text.splitlines()
+    start = reading._body_start(lines)
+    body = COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), "\n".join(lines[start:]))
+    md = MarkdownIt("commonmark", {"html": False}).enable(["table", "strikethrough"])
+    tokens = md.parse(body)
+    item = None
+    for tok in tokens:
+        if tok.type == "heading_open" and tok.map:
+            tok.attrSet("id", f"L{start + tok.map[0] + 1}")
+        elif tok.type == "list_item_open":
+            item = tok
+        elif tok.type == "inline" and tok.children:
+            first = tok.children[0]
+            if item is not None and first.type == "text" and first.content[:4] in ("[ ] ", "[x] ", "[X] "):
+                on = first.content[1] != " "
+                item.attrSet("class", "task done" if on else "task")
+                first.content = first.content[4:]
+                _md_inline(tok.children, names, self_name)
+                tok.children.insert(0, type(first)("html_inline", "", 0,
+                                                   content=f'<span class="box{" on" if on else ""}"></span>'))
+            else:
+                _md_inline(tok.children, names, self_name)
+            item = None
+    fm = ""
+    if start:
+        fm = ('<details class="fm"><summary>front-matter</summary><pre>'
+              + esc("\n".join(lines[:start])) + "</pre></details>")
+    return fm + '<div class="md">' + md.renderer.render(tokens, md.options, {}) + "</div>"
+
+
+def title_html(title: str) -> str:
+    """A doc's title, with its `code` spans as code."""
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", esc(title))
+
+
 def _names(store: Store) -> set[str]:
     return {r[0] for r in store.projection.db.execute("SELECT name FROM docs")}
 
@@ -222,8 +315,9 @@ def _tags(doc: Doc) -> str:
                    (doc.type, doc.status or docs.status_label(doc), docs.repo_label(doc)) if v)
 
 
-def view_doc(store: Store, ref: str) -> str:
-    """A doc (or a revision, `name@rev`), with its outline and its links both ways."""
+def view_doc(store: Store, ref: str, as_text: bool = False) -> str:
+    """A doc (or a revision, `name@rev`), with its outline and its links both ways: rendered,
+    or as text (`as_text`, or without `markdown-it-py`)."""
     name, rev = history.split_ref(ref)
     current = docs.find(store, name)
     doc, text = history.show(store, ref)
@@ -247,10 +341,16 @@ def view_doc(store: Store, ref: str) -> str:
     elif current.divergent:
         notice = ('<div class="notice">This doc has divergent branches (edited on two nodes at once): '
                   f"<code>cairn resolve {esc(current.name)}</code>.</div>")
-    nav = (f'<nav><a href="{doc_url(current.name, "/log")}">history</a>'
+    shown = None if as_text else markdown_html(text, names, doc.name)
+    toggle = ""
+    if MarkdownIt is not None:
+        here = doc_url(ref)
+        toggle = (f'<a href="{here}">rendered</a>' if shown is None
+                  else f'<a href="{here}?view=text">as text</a>')
+    nav = (f'<nav><a href="{doc_url(current.name, "/log")}">history</a>{toggle}'
            f"<h2>outline</h2>{outline}{links}</nav>")
-    body = (f"<h1>{esc(doc.title)}</h1>{notice}<div>{_tags(doc)}</div>"
-            f'<div class="doc">{nav}<div>{text_html(text, names, doc.name)}</div></div>')
+    body = (f"<h1>{title_html(doc.title)}</h1>{notice}<div>{_tags(doc)}</div>"
+            f'<div class="doc">{nav}<div>{shown or text_html(text, names, doc.name)}</div></div>')
     return page(doc.name, body)
 
 
@@ -336,7 +436,7 @@ def route(store: Store, target: str) -> tuple[int, str]:
             ref = path[len("/doc/"):]
             if ref.endswith("/log"):
                 return 200, view_log(store, ref[:-len("/log")])
-            return 200, view_doc(store, ref)
+            return 200, view_doc(store, ref, qs.get("view") == "text")
     except CairnError as e:
         return 404, page("not found", f"<h1>Not found</h1><p>{esc(e)}</p>")
     return 404, page("not found", f"<h1>Not found</h1><p>{esc(path)}</p>")

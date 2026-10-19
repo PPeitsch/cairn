@@ -158,6 +158,9 @@ uv tool install git+https://github.com/PPeitsch/cairn    # or: pipx install git+
 cairn --version
 ```
 
+With `"cairn[serve] @ git+https://github.com/PPeitsch/cairn"` instead, `cairn serve` also renders
+docs as markdown (it adds `markdown-it-py`); without it, it shows them as text.
+
 ## Usage
 
 ```bash
@@ -190,9 +193,10 @@ cairn serve [--port N] [--open]             # read-only web view on 127.0.0.1 (d
 ### Browsing in the browser
 
 `cairn serve` shows the docs in a local web page: the open queue grouped by repo (filtered by
-scope, type and repo), each doc as the text it is stored as, with its outline, its links both
-ways and the names of other docs turned into links, its history with the diff of each revision,
-`weekly` and full-text search. It only reads, listens only on `127.0.0.1` and opens the database
+scope, type and repo), each doc with its outline, its links both ways and the names of other docs
+turned into links, its history with the diff of each revision, `weekly` and full-text search. A
+doc is rendered as markdown with the `serve` extra installed (raw HTML in a doc is shown as text,
+never run), and as the text it is stored as otherwise or with "as text". It only reads, listens only on `127.0.0.1` and opens the database
 on each request, so whatever a sync brings shows up on reload. To browse another node, tunnel:
 `ssh -L 8737:localhost:8737 <node>` and `cairn serve` there.
 

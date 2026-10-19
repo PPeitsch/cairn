@@ -18,11 +18,19 @@ dependencies = [
 [project.scripts]
 cairn = "cairn.cli:main"
 
+[project.optional-dependencies]
+serve = [
+    "markdown-it-py>=3",
+]
+
 [tool.hatch.version]
 path = "src/cairn/__init__.py"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "markdown-it-py>=3",
+    "pytest>=8",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
