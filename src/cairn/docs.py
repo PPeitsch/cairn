@@ -35,6 +35,7 @@ DOC_TYPES = TYPES + ("handoff",)                 # the ones that exist (handoff:
 SCOPES = ("wip", "done", "ref")
 ICON = {"bug": "[bug]  ", "plan": "[plan] ", "ref": "[ref]  ", "infra": "[infra]", "handoff": "[handoff]"}
 LINK_KINDS = ("plan", "origin", "references")   # the ones that go into the front-matter as paths
+CROSS_REPO = "cross-repo"                       # `repo:` of what spans several (or none)
 _NAME_RE = re.compile(r"^[\w.+-]+$")
 
 
@@ -164,7 +165,8 @@ def render(store: Store, doc: Doc) -> str:
 
 
 def repo_label(doc: Doc) -> str:
-    return doc.repo or "(cross-repo)"
+    """Older docs created outside any repo have no `repo:`: they are cross-repo too."""
+    return doc.repo or CROSS_REPO
 
 
 def status_label(doc: Doc) -> str:
@@ -187,9 +189,7 @@ class Result:
 
 
 def _meta_base(store: Store, type_: str, status: str | None, repo: str) -> dict:
-    meta = {"type": type_}
-    if repo:
-        meta["repo"] = repo
+    meta = {"type": type_, "repo": repo or CROSS_REPO}
     if status:
         meta["status"] = status
     meta["date"] = clock.today()
@@ -541,7 +541,7 @@ def grouped_by_repo(docs_: list[Doc]) -> list[str]:
 def handoff_line(doc: Doc, stale: int = 14) -> str:
     """`stale`: after how many days it is flagged as old (`[docs] handoff_stale_days`)."""
     age = handoff_age(doc)
-    parts = [f"to: {', '.join(handoff_to(doc)) or 'cross-repo'}"]
+    parts = [f"to: {', '.join(handoff_to(doc)) or CROSS_REPO}"]
     if age is not None:
         parts.append("from today" if age == 0 else f"{age} day(s) old")
         if age > stale:
