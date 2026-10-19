@@ -1,16 +1,105 @@
 # cairn
 
-A local-first store for working docs (diagnoses, plans, references) and handoffs between
-conversations. Every place where work happens is a **node** with its own database; nodes sync
-over ssh, git style, and agents access it through MCP stdio.
+A local-first store for the working docs an AI coding agent and you write along the way —
+diagnoses, plans, references — and for the handoff notes one conversation leaves for the next.
+Docs live in a signed event log on your machine, the agent reads and writes them through MCP, and
+if you work on more than one machine, they sync over plain ssh.
 
-> Status: in daily use. Done: the local core (log, projection, CLI), MCP stdio and the Claude
-> Code integration, ssh sync with signed events, and the migration from wip-doc. Still to do, if
-> needed: an HTTPS transport for cloud nodes without outbound ssh.
+> Status: in daily use by its author since October 2026, on two nodes (a desktop and a VPS).
+> Single-user by design. The Claude Code integration is built in; the MCP server works with any
+> MCP client. Not done yet: an HTTPS transport for nodes that cannot open an outbound ssh
+> connection.
 
-> cairn started out in Spanish. Logs written back then carry Spanish field names and statuses
-> (`tipo`, `estado: en_progreso`, `nota`, …): they are read as aliases of the English ones,
-> forever, since the log is never rewritten. Everything new is written in English.
+## Why
+
+Agents are good at investigating a bug or designing a feature, and bad at remembering it. What
+was tried, which hypothesis was dropped and why, what the next session should pick up: that
+lives in the conversation and is gone when it ends, or ends up as loose `.md` files that nobody
+closes, nobody finds and that quietly go stale.
+
+cairn gives that material a lifecycle. A diagnosis is opened when the investigation starts and
+closed when it is fixed; a closed doc says *what happened*, and whatever will be looked up again
+is promoted to a reference that says *how something is*. A handoff is a one-shot note that the
+next conversation is told about at startup, and that is archived once taken. `cairn weekly`
+turns the closed docs into a digest of what got done.
+
+### What it is not
+
+- **Not an issue tracker.** There are no priorities, assignees or dependency graphs. If that is
+  what you want for an agent, look at [Beads](https://github.com/steveyegge/beads), which
+  tracks issues and their dependencies inside the repo. cairn keeps the narrative around the
+  work: the why, the path the diagnosis took, the decisions.
+- **Not a knowledge graph or a notes app.** [Basic Memory](https://github.com/basicmachines-co/basic-memory)
+  builds a linked knowledge base out of Markdown files you can also browse in Obsidian. cairn's
+  docs are few, typed and short-lived: they are opened and closed, and links between them are
+  only the ones the lifecycle creates (a reference and the doc it came from, a handoff and its
+  plan).
+- **Not collaborative.** The nodes are your own machines and trust each other; there are no
+  users or permissions, and no web UI.
+- **Not tied to a repo.** Docs are stored by node, not inside each project: one queue of open
+  work across every repo under your projects folder, each doc stamped with the repo it belongs
+  to.
+
+## Quick start (one machine)
+
+A single node is a complete installation: sync is optional and can be added later.
+
+```bash
+uv tool install git+https://github.com/PPeitsch/cairn    # or: pipx install git+…
+cairn init                                  # config, data folder and node key
+cairn integrate claude-code                 # MCP server + the SessionStart hook for handoffs
+```
+
+From then on, the agent opens and fills docs with the `cairn_*` tools, following the
+instructions the MCP server carries. The same operations, by hand:
+
+```bash
+cd ~/projects/api
+cairn new api timeout_on_login bug          # 2026-10-19_api_BUG_timeout_on_login, repo: api
+cairn edit 2026-10-19_api_BUG_timeout_on_login                # in $EDITOR
+cairn close 2026-10-19_api_BUG_timeout_on_login               # stops if `- [ ]` items remain
+cairn promote 2026-10-19_api_BUG_timeout_on_login api auth_flow   # sections → reference api_auth_flow
+
+cairn new api db_migration plan             # a feature plan
+cairn handoff new api finish_migration --plan 2026-10-19_api_db_migration
+#   next conversation in ~/projects/api: "there is a pending handoff, take it?"
+
+cairn list --by-repo                        # the open work, grouped by repo
+cairn search --fts "connection pool"        # by relevance, with the matching snippet
+cairn show api_auth_flow --section Context  # read a part of a long doc
+cairn weekly                                # what got closed in the last 7 days
+```
+
+## The taxonomy
+
+The doc types, their sections and the naming are what cairn *is*, more than its storage:
+
+| Type | What goes in it | Lifecycle | Name |
+|---|---|---|---|
+| `bug`, `infra` | a diagnosis: TL;DR, Context / topology, Symptoms observed, Discoveries (in order), Fixes applied, Pending, Useful commands | `new` → `close` ↔ `reopen` | `<date>_<area>_BUG_<topic>`, `<date>_<area>_<topic>` |
+| `plan` | a feature plan: TL;DR, Context / problem, Scope, Design / proposal, Decisions, Pending | `new` → `close` ↔ `reopen` | `<date>_<area>_<topic>` |
+| `ref` | reference material in the present tense: a review, an API map, architecture notes | none: it is updated | `<area>_<topic>` |
+| `handoff` | a note for the next conversation: what to read first, work order, what to ask | `handoff new` → `take` / `drop` | `<date>_<area>_HANDOFF_<topic>` |
+
+Status lives in the front-matter (`type`, `repo`, `status`, `date`, `closed`, …) and only the
+operations change it: a doc with unchecked `- [ ]` items does not close without `--force`, a
+discarded one keeps its reason (`close --discard "why"`), and editing a reference stamps
+`updated:` so a stale one shows its age. Work that spans several repos goes under
+`repo: cross-repo`.
+
+None of the text is hard-wired. `cairn defaults <folder>` exports the built-in templates (one per
+type) and the MCP instructions (when and how the agent should document); edit them — rewrite the
+sections, translate them — and point `[docs] templates` and `[mcp] instructions` at them. The
+data vocabulary (field names, statuses) is the one thing that stays fixed: it is the format the
+nodes understand each other in.
+
+## More than one machine
+
+Every machine where work happens can be a **node** with its own copy of the database. Nodes
+exchange events over ssh, so the one requirement is a machine the others can reach: a VPS, a
+Raspberry Pi or a NAS that is always on works as the meeting point, and laptops that come and go
+sync against it. Every write triggers a background sync, the handoffs hook pulls before
+announcing, and a systemd timer covers the gaps. Details in [Sync between nodes](#sync-between-nodes).
 
 ## How it works
 
@@ -65,7 +154,7 @@ does not load is not saved: `cairn` goes back to the previous one.
 ## Installation
 
 ```bash
-uv tool install git+<repo-url>    # or: pipx install git+<repo-url>
+uv tool install git+https://github.com/PPeitsch/cairn    # or: pipx install git+…
 cairn --version
 ```
 
@@ -224,6 +313,13 @@ cairn migrate wip-doc export <dest> [scope] [--force] # cairn's docs back as tha
 
 Importing twice duplicates nothing, and `export` of what was imported reproduces the files,
 with wip-doc's Spanish front-matter in cairn's vocabulary.
+
+## The Spanish vocabulary of older logs
+
+cairn started out in Spanish, and logs written back then carry Spanish field names and statuses
+(`tipo`, `estado: en_progreso`, `nota`, …). They are read as aliases of the English ones, forever:
+the log is signed and never rewritten. Everything new is written in English, and hand input with
+the old names (`edit --set estado=…`) is saved in English too.
 
 ## Development
 
