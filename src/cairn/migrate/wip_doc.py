@@ -1,22 +1,32 @@
-"""Docs in and out as files: `import` from the wip-doc tree and `export` to that tree.
+"""Migrating from wip-doc, the file-based tool cairn replaces: its docs lived as `.md` files
+with front-matter in a single tree,
 
     <root>/_wip/*.md     open docs and pending handoffs
     <root>/_done/*.md    closed docs and archived handoffs
     <root>/_ref/*.md     references
 
-They are inverses: exporting what was imported reproduces the files (front-matter + body), with
-links as relative paths. Only the `.md` files at the top of each folder are read; `scripts/`,
-`validations/` and the rest are not docs.
+and a `SessionStart` hook announced the handoffs. The steps, each one its own command
+(`cairn migrate wip-doc ...`):
+
+- `import` reads the tree into cairn and `export` writes cairn's docs back as that tree. They
+  are inverses: exporting what was imported reproduces the files (front-matter + body), with
+  links as relative paths. Only the `.md` files at the top of each folder are read; `scripts/`,
+  `validations/` and the rest are not docs.
+- `check` reports what is left over after importing: files already in cairn, `.md` files that
+  were not imported, and `_wip/` folders inside repos (the location used before the single tree).
+- `unhook` removes wip-doc's handoffs hook from Claude Code's settings: with both active, every
+  handoff would be announced twice.
 """
 
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cairn import docs
+from cairn import docs, integrate
 from cairn.docs import LINK_KINDS, TIPOS_DOC
 from cairn.markdown import parse_front_matter
 from cairn.projection import DocState
@@ -186,3 +196,87 @@ def export_tree(store: Store, root: Path, scopes: tuple[str, ...] = docs.SCOPES,
         rep.stale += sorted(f"_{scope}/{p.name}" for p in d.glob("*.md")
                             if p not in ours and p.name.lower() != "readme.md")
     return rep
+
+
+# ──────────────────────────────────────────────────────────────── leftovers
+
+def doc_dirs_in_repos(root: Path, prune=frozenset(), max_depth: int = 4) -> list[Path]:
+    """`_wip/_done/_ref` folders with `.md` files inside a repo (not in the projects root)."""
+    out = []
+    for dirpath, dirnames, _ in os.walk(root):
+        depth = len(Path(dirpath).relative_to(root).parts)
+        for d in dirnames:
+            if d in DOC_DIRS and depth > 0:
+                c = Path(dirpath) / d
+                if any(x.name.lower() != "readme.md" for x in c.rglob("*.md")):
+                    out.append(c)
+        dirnames[:] = [] if depth >= max_depth else [
+            x for x in dirnames if x not in prune and x not in DOC_DIRS and not x.startswith(".")]
+    return sorted(out)
+
+
+def leftovers(store: Store, root: Path | None = None) -> list[str]:
+    """What the wip-doc tree under `root` (default: the projects root) still has that is not in
+    cairn, or that cairn already has. Nothing if the root does not exist."""
+    cfg = store.config
+    root = (root or cfg.projects).expanduser()
+    if not root.is_dir():
+        return []
+    out: list[str] = []
+    for c in DOC_DIRS:
+        d = root / c
+        if not d.is_dir():
+            continue
+        for p in sorted(d.glob("*.md")):
+            if not p.is_file() or p.name.lower() == "readme.md":
+                continue
+            if docs.name_taken(store, p.stem):
+                out.append(f"{c}/{p.name}: el doc ya está en cairn y el archivo quedó de wip-doc "
+                           "(borrarlo; `cairn show` lo reproduce)")
+            else:
+                out.append(f"{c}/{p.name}: un doc fuera de cairn — `cairn migrate wip-doc import "
+                           f"{root}` lo suma")
+    for d in doc_dirs_in_repos(root, frozenset(cfg.prune), cfg.max_depth):
+        n = sum(1 for x in d.rglob("*.md") if x.name.lower() != "readme.md")
+        out.append(f"{d.relative_to(root)}/ tiene {n} .md adentro de un repo — si son docs, "
+                   f"`cairn migrate wip-doc import {d.parent}`; si no, van en {root.name}/{d.name}/")
+    return out
+
+
+# ──────────────────────────────────────────────────────────────── hook
+
+def is_hook(command: str) -> bool:
+    """wip-doc's handoffs hook (`.../wip-doc/driver.py handoff hook`), which cairn's replaces."""
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return False
+    return parts[-2:] == ["handoff", "hook"] and any(
+        Path(p).name == "driver.py" and Path(p).parent.name == "wip-doc" for p in parts[:-2])
+
+
+def unhook(dry_run: bool = False) -> integrate.Report:
+    """Removes wip-doc's handoffs hook from Claude Code's `settings.json`, without touching the
+    rest. Idempotent."""
+    report = integrate.Report()
+    path = integrate.settings_path()
+    data = integrate._load_settings(path)
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict) or not isinstance(hooks.get("SessionStart"), list):
+        return report
+    groups, removed = integrate._strip_hooks(hooks["SessionStart"], is_hook)
+    report.actions += [f"sacar hook SessionStart de wip-doc: {r}" for r in removed]
+    if not removed:
+        return report
+    hooks = dict(hooks)
+    if groups:
+        hooks["SessionStart"] = groups
+    else:
+        hooks.pop("SessionStart")
+    if hooks:
+        data["hooks"] = hooks
+    else:
+        data.pop("hooks")
+    if not dry_run:
+        integrate._write_settings(path, data)
+    return report

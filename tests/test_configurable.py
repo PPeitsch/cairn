@@ -27,7 +27,7 @@ def set_cfg(**tables):
 
 def test_defaults(cfg):
     assert (cfg.sync_timeout, cfg.sync_hook_timeout, cfg.handoff_stale_days) == (60, 15, 14)
-    assert cfg.file_dirs == ("scripts", "validations") and cfg.max_depth == 4
+    assert cfg.file_dirs == () and cfg.max_depth == 4
     assert (cfg.mcp_name, cfg.start_timeout, cfg.end_timeout) == ("cairn", 30, 10)
     assert cfg.templates_dir is None and cfg.mcp_instructions is None
 
@@ -104,6 +104,9 @@ def test_file_dirs_are_configurable(cfg, env):
     root = env / "projects"
     (root / "_wip" / "notas").mkdir(parents=True)
     (root / "_wip" / "notas" / "x.md").write_text("una aguja\n")
+    with Store(config.load()) as s:          # without file_dirs, the folders are not looked at
+        assert tree.problems(s) == [] and tree.search_files(s, "aguja") == []
+    set_cfg(docs={"file_dirs": "scripts"})
     with Store(config.load()) as s:
         assert any("_wip/notas/ no es una carpeta de archivos" in p for p in tree.problems(s))
         assert tree.search_files(s, "aguja") == []

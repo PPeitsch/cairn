@@ -1,7 +1,10 @@
-"""What stays as files in the projects root: wip-doc leftovers and scripts/validations."""
+"""Files that are not docs, in the `[docs] file_dirs` subfolders of the projects root."""
 
-from cairn import tree
+import pytest
+
+from cairn import config, tree
 from cairn.cli import main
+from cairn.store import Store
 
 HOY = "2026-03-10"
 
@@ -13,38 +16,38 @@ def run(capsys, *args, ok=True):
     return out
 
 
+@pytest.fixture
+def store(cfg):
+    """A node with `[docs] file_dirs = "scripts, validations"`."""
+    config.update(lambda raw: raw.setdefault("docs", {}).update(file_dirs="scripts, validations"))
+    s = Store(config.load())
+    yield s
+    s.close()
+
+
 def test_empty_or_missing_root_reports_nothing(store, env):
     assert tree.problems(store) == []
     (env / "projects").rmdir()
     assert tree.problems(store) == []
 
 
-def test_wip_doc_leftovers(store, env, capsys):
+def test_files_out_of_place(store, env, capsys):
     root = env / "projects"
-    run(capsys, "new", "api", "timeout", "--repo", "api")
-    name = f"{HOY}_api_timeout"
     (root / "_wip" / "scripts").mkdir(parents=True)
     (root / "_wip" / "scripts" / "api_prueba.py").write_text("print(1)\n")
-    (root / "_wip" / f"{name}.md").write_text("ya importado\n")
     (root / "_wip" / "2026-03-09_api_suelto.md").write_text("escrito a mano\n")
     (root / "_wip" / "README.md").write_text("no es un doc\n")
     (root / "_wip" / "datos.csv").write_text("a,b\n")
     (root / "_done" / "viejo").mkdir(parents=True)
-    (root / "api" / "_wip").mkdir(parents=True)
-    (root / "api" / "_wip" / "nota.md").write_text("de antes del árbol único\n")
-    (root / "api" / "node_modules" / "x" / "_wip").mkdir(parents=True)
-    (root / "api" / "node_modules" / "x" / "_wip" / "y.md").write_text("no se mira\n")
 
     p = tree.problems(store)
-    assert any(f"_wip/{name}.md: el doc ya está en cairn" in x for x in p)
-    assert any("_wip/2026-03-09_api_suelto.md: un doc fuera de cairn" in x for x in p)
-    assert any("_wip/datos.csv no es un doc" in x for x in p)
+    assert any("_wip/2026-03-09_api_suelto.md: un .md suelto" in x for x in p)
+    assert any("_wip/datos.csv no es un doc — va en _wip/ + scripts/ o validations/" in x for x in p)
     assert any("_done/viejo/ no es una carpeta de archivos (scripts/ o validations/)" in x for x in p)
-    assert any(x.startswith("api/_wip/ tiene 1 .md adentro de un repo") for x in p)
-    assert len(p) == 5, p          # not the README, nor scripts/, nor node_modules
+    assert len(p) == 3, p          # not the README nor scripts/
 
     out = run(capsys, "check", ok=False).out
-    assert "un doc fuera de cairn" in out and "5 problema(s)" in out
+    assert "un .md suelto" in out and "3 problema(s)" in out
 
 
 def test_search_includes_scripts_and_validations_files(store, env, capsys):

@@ -10,8 +10,9 @@
     [docs]           projects, author (default: `git config user.name`, or the system user),
                      handoff_stale_days (default 14), templates (folder with custom templates:
                      bug.md, infra.md, plan.md, ref.md, ref_header.md, handoff.md),
-                     file_dirs (default "scripts, validations"), prune (folders that are not
-                     walked), max_depth (default 4)
+                     file_dirs (subfolders of <projects>/_wip, _done and _ref with files that
+                     are not docs; default none), prune (folders that are not walked),
+                     max_depth (default 4: how deep `migrate wip-doc check` looks in repos)
     [mcp]            instructions = file with the server instructions (replaces the built-in
                      ones; `cairn defaults <folder>` exports them as a starting point),
                      show_max_chars (default 8000: cairn_show returns a longer doc as an outline),
@@ -50,7 +51,7 @@ from pathlib import Path
 from cairn.events import NODE_RE
 
 CONFIG_NAME = "config.toml"
-DEFAULT_FILE_DIRS = ("scripts", "validations")
+DEFAULT_FILE_DIRS: tuple[str, ...] = ()
 DEFAULT_PRUNE = ("node_modules", ".git", "venv", ".venv", "__pycache__", ".tox", ".mypy_cache",
                  "site-packages")
 _HEADER = "# Configuración de cairn para este nodo. Ver `cairn --help`.\n\n"

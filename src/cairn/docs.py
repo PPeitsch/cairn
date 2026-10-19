@@ -77,7 +77,8 @@ class Doc:
 
     @property
     def path(self) -> str:
-        """Where it would be in the wip-doc tree (and where `export` puts it)."""
+        """The doc as a file, `_<scope>/<name>.md`: how it is shown, what links are rendered
+        relative to, and where `migrate wip-doc export` writes it."""
         return f"_{self.scope}/{self.name}.md"
 
     def date_closed(self) -> str:
