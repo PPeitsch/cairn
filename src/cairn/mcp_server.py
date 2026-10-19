@@ -220,7 +220,7 @@ def cairn_edit(doc: str, old_text: str | None = None, new_text: str | None = Non
     `new_text`. To replace the whole body: `body` (markdown without front-matter).
     `set_fields` / `unset_fields`: front-matter fields (e.g. `note`, `status` within the same
     open/closed group). Opening, closing and linking are not done by editing: that is what
-    cairn_close, cairn_reopen, cairn_promote and the handoffs are for."""
+    cairn_close, cairn_reopen, cairn_promote, cairn_link and the handoffs are for."""
     if (old_text is None) != (new_text is None):
         raise ToolError("old_text and new_text go together")
     if old_text is not None and body is not None:
@@ -269,6 +269,19 @@ def cairn_promote(doc: str, area: str, topic: str, sections: list[str] | None = 
         r = docs.promote(store, doc, area, topic, sections, force=force)
     return _with_warnings(f"{r.doc.name}\n  carried over: {', '.join(r.extra['carried'])}",
                           r.warnings)
+
+
+def cairn_link(doc: str, kind: Literal["origin", "references", "plan"], other: str,
+               remove: bool = False) -> str:
+    """Links two docs by hand: `doc` gets `other` under `<kind>:` (one way; `other` shows it as
+    an incoming link). For what promote and the handoffs do not link on their own: pending
+    items carried to a new doc (`origin`), a plan that came out of another one. `remove=true`
+    takes the link out."""
+    with _open() as store:
+        r = docs.link(store, doc, kind, other, remove=remove)
+    if not r.extra["changed"]:
+        return _with_warnings(f"No changes: {r.doc.name}", r.warnings)
+    return f"{'Unlinked' if remove else 'Linked'}: {r.doc.name} {kind} → {r.extra['other']}"
 
 
 def cairn_weekly(days: int = 7) -> str:
@@ -365,7 +378,7 @@ TOOLS = [
     (cairn_list, READ), (cairn_search, READ), (cairn_show, READ), (cairn_weekly, READ),
     (cairn_check, READ), (cairn_log, READ), (cairn_diff, READ), (cairn_handoff_list, READ),
     (cairn_new, WRITE), (cairn_edit, WRITE), (cairn_close, WRITE), (cairn_reopen, WRITE),
-    (cairn_promote, WRITE), (cairn_handoff_new, WRITE), (cairn_handoff_take, WRITE),
+    (cairn_promote, WRITE), (cairn_link, WRITE), (cairn_handoff_new, WRITE), (cairn_handoff_take, WRITE),
     (cairn_handoff_drop, WRITE),
 ]
 

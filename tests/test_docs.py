@@ -182,6 +182,43 @@ def test_promote_section_and_append(store, repo, capsys):
     assert ref.links == [["origin", docs.find(store, plan).id]]
 
 
+# ──────────────────────────────────────────────────────────────── link
+
+def test_link_by_hand(store, repo, capsys):
+    run(capsys, "new", "api", "viejo", "plan")
+    run(capsys, "new", "api", "nuevo", "plan")
+    viejo, nuevo = f"{HOY}_api_viejo", f"{HOY}_api_nuevo"
+    assert f"Linked: {nuevo} origin → {viejo}" in run(capsys, "link", nuevo, "origin", viejo).out
+    meta, _ = parse_front_matter(docs.render(store, docs.find(store, nuevo)))
+    assert meta["origin"] == [f"../_wip/{viejo}.md"]
+    assert docs.find(store, viejo).links == []                # one way
+
+    r = run(capsys, "link", nuevo, "origin", viejo)           # again: nothing to do
+    assert r.out == "" and "already had" in r.err
+    assert "itself" in run(capsys, "link", nuevo, "plan", nuevo, ok=False).err
+    assert "Not found" in run(capsys, "link", nuevo, "plan", "no_existe", ok=False).err
+    assert "has no `plan` link" in run(capsys, "link", nuevo, "plan", viejo, "--remove", ok=False).err
+    assert docs.link(store, nuevo, "origen", viejo).extra["changed"] is False   # old vocabulary
+
+    assert "Unlinked" in run(capsys, "link", nuevo, "origin", viejo, "--remove").out
+    assert docs.find(store, nuevo).links == []
+    ops = [r[0] for r in store.projection.db.execute(
+        "SELECT op FROM revisions WHERE doc_id = ? ORDER BY seq", (docs.find(store, nuevo).id,))]
+    assert ops == ["create", "link", "unlink"]
+
+
+def test_link_remove_dangling(store, repo, capsys):
+    """A link to a doc that does not exist (what `check` reports) is removed by its id prefix."""
+    run(capsys, "new", "api", "huerfano", "plan")
+    doc = docs.find(store, f"{HOY}_api_huerfano")
+    with store.writer() as w:
+        w.emit("link", doc.id, {"link_add": [["plan", "ab" * 16]]})
+    assert any("does not exist" in p for p in docs.check(store))
+    assert "has no `origin`" not in run(capsys, "link", doc.name, "plan", "abababab", "--remove").err
+    assert docs.find(store, doc.name).links == []
+    assert "Not found" in run(capsys, "link", doc.name, "plan", "abababab", ok=False).err
+
+
 # ──────────────────────────────────────────────────────────────── listings and search
 
 @pytest.fixture
