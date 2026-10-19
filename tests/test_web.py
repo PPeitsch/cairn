@@ -34,14 +34,39 @@ def test_a_doc_as_text_with_outline_links_and_checklist(store):
     b = _plan(store, "colas")
     text = docs.render(store, a).replace("- [ ]", f"- [ ] seguir con `{b.name}`\n- [x] hecho")
     edit.apply(store, a.id, text=text)
-    status, body = web.route(store, f"/doc/{a.name}")
+    status, body = web.route(store, f"/doc/{a.name}?view=text")
     assert status == 200
     assert f'<a href="/doc/{b.name}">{b.name}</a>' in body        # another doc, linked
-    assert f'href="/doc/{a.name}"' not in body.split("<main>")[1].split("history")[1]  # not itself
+    assert f'href="/doc/{a.name}"' not in body.split('<pre class="text">')[1]      # not itself
     assert 'class="todo"' in body and 'class="done"' in body
     assert '<span class="h">## TL;DR</span>' in body
     assert '>TL;DR</a>' in body                                    # in the outline
     assert f'href="/doc/{a.name}/log"' in body
+
+
+def test_a_doc_rendered_as_markdown(store):
+    a = _plan(store)
+    b = _plan(store, "colas")
+    text = docs.render(store, a).replace("- [ ]", f"- [ ] seguir con `{b.name}`\n- [x] hecho") + (
+        f"\n| a | b |\n|---|---|\n| [ver](../_wip/{b.name}.md) | x |\n\n<b>crudo</b>\n")
+    edit.apply(store, a.id, text=text)
+    _, body = web.route(store, f"/doc/{a.name}")
+    assert '<details class="fm">' in body and "<table>" in body
+    assert f'<code><a href="/doc/{b.name}">{b.name}</a></code>' in body     # a name in `code`
+    assert f'<a href="/doc/{b.name}">ver</a>' in body                       # a tree path
+    assert '<li class="task"><span class="box"></span>seguir' in body
+    assert '<li class="task done"><span class="box on"></span>hecho' in body
+    assert '<h2 id="L11">TL;DR</h2>' in body and 'href="#L11"' in body       # outline anchors
+    assert "<b>crudo</b>" not in body and "&lt;b&gt;crudo&lt;/b&gt;" in body
+    assert "<!--" not in body.split("<main>")[1]                            # template comments
+    assert f'href="/doc/{a.name}?view=text">as text</a>' in body
+
+
+def test_without_markdown_it_it_stays_as_text(store, monkeypatch):
+    a = _plan(store)
+    monkeypatch.setattr(web, "MarkdownIt", None)
+    _, body = web.route(store, f"/doc/{a.name}")
+    assert '<pre class="text">' in body and "as text</a>" not in body and "rendered</a>" not in body
 
 
 def test_links_both_ways(store):
