@@ -49,11 +49,13 @@ dependencies = [
 [package.optional-dependencies]
 serve = [
     { name = "markdown-it-py" },
+    { name = "pygments" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "markdown-it-py" },
+    { name = "pygments" },
     { name = "pytest" },
 ]
 
@@ -62,12 +64,14 @@ requires-dist = [
     { name = "cryptography", specifier = ">=42" },
     { name = "markdown-it-py", marker = "extra == 'serve'", specifier = ">=3" },
     { name = "mcp", specifier = ">=2.3,<3" },
+    { name = "pygments", marker = "extra == 'serve'", specifier = ">=2.17" },
 ]
 provides-extras = ["serve"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "markdown-it-py", specifier = ">=3" },
+    { name = "pygments", specifier = ">=2.17" },
     { name = "pytest", specifier = ">=8" },
 ]
 
