@@ -183,7 +183,18 @@ cairn log [<doc>] [-n N]
 cairn diff <doc> [rev_a] [rev_b]            # default: the last change
 cairn rebuild                               # rebuilds the SQLite database from the log
 cairn resolve <doc> [--keep main|<hash>]    # divergent branches: see them and pick one
+
+cairn serve [--port N] [--open]             # read-only web view on 127.0.0.1 (default 8737)
 ```
+
+### Browsing in the browser
+
+`cairn serve` shows the docs in a local web page: the open queue grouped by repo (filtered by
+scope, type and repo), each doc as the text it is stored as, with its outline, its links both
+ways and the names of other docs turned into links, its history with the diff of each revision,
+`weekly` and full-text search. It only reads, listens only on `127.0.0.1` and opens the database
+on each request, so whatever a sync brings shows up on reload. To browse another node, tunnel:
+`ssh -L 8737:localhost:8737 <node>` and `cairn serve` there.
 
 ### Sync between nodes
 
