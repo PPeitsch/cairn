@@ -515,11 +515,44 @@ def _link_li(kind: str, target: Doc | None, name: str) -> str:
     return (f'<li><span class="k">{esc(kind)}</span><a href="{doc_url(name)}">{title}</a></li>')
 
 
+def outline(text: str) -> str:
+    """The doc's sections as a path of discs: the top ones on the main line, and the ones
+    inside each folded under its disc (a `<details>`: the disc opens it, the title goes to the
+    section). The script marks where the reading is and opens its section."""
+    secs = [s for s in reading.sections(text) if s.level > 1]
+    if not secs:
+        return ""
+    top = min(s.level for s in secs)
+    groups: list[tuple[reading.Section, list[reading.Section]]] = []
+    for s in secs:
+        if s.level == top or not groups:
+            groups.append((s, []))
+        else:
+            groups[-1][1].append(s)
+
+    def node(s: reading.Section, cls: str = "fl-node") -> str:
+        return (f'<a class="{cls}" href="#L{s.start}" title="{esc(s.title)}">'
+                f'<span class="fl-label">{title_html(s.title)}</span></a>')
+
+    items = []
+    for s, kids in groups:
+        if not kids:
+            items.append(f'<li><span class="fl-dot"></span>{node(s)}</li>')
+            continue
+        inner = "".join(f'<li><span class="fl-dot"></span>{node(k)}</li>' for k in kids)
+        items.append(f'<li class="fl-group"><details><summary><span class="fl-dot" '
+                     f'title="{len(kids)} inside"><span>{len(kids)}</span></span>{node(s)}</summary>'
+                     f'<ol class="fl-kids">{inner}</ol></details></li>')
+    return f'<ol class="flow toc">{"".join(items)}</ol>'
+
+
 # ──────────────────────────────────────────────────────────────── the doc's group of links
 
 GROUP_MAX = 24              # past this many docs, the ones farthest from the doc are left out
 LANES = ("plan", "bug", "infra", "handoff", "ref")
-_COL, _NODE_W, _NODE_H, _LANE_H, _LEFT, _TOP, _AXIS = 148, 132, 44, 70, 64, 14, 30
+_FIT = 860                  # the card's inner width on a wide screen: the columns spread to fill it
+_NODE_H, _LANE_H, _LEFT, _TOP, _AXIS = 44, 72, 64, 14, 30
+_NODE_MIN, _NODE_MAX, _GAP_MIN = 128, 176, 52
 
 
 def link_group(store: Store, doc: Doc) -> list[Doc]:
@@ -541,70 +574,77 @@ def _when(doc: Doc) -> str:
     return str(doc.meta.get("date") or doc.created[:10])
 
 
-def _short_title(doc: Doc) -> list[str]:
-    """The title without its `<area> — ` lead and without markup, in at most two lines."""
+def _short_title(doc: Doc, width: int = 21) -> list[str]:
+    """The title without its `<area> — ` lead and without markup, in at most two lines of
+    `width` characters."""
     t = re.sub(r"^[^—]{1,40}— ", "", doc.title).replace("`", "").replace("**", "")
     lines, cur = [], ""
     for word in t.split():
-        if cur and len(cur) + 1 + len(word) > 21:
+        if cur and len(cur) + 1 + len(word) > width:
             lines.append(cur)
             cur = word
         else:
             cur = f"{cur} {word}".strip()
     lines.append(cur)
     if len(lines) > 2:
-        lines = [lines[0], lines[1][:19].rstrip() + "…"]
-    return [x if len(x) <= 21 else x[:20] + "…" for x in lines]
+        lines = [lines[0], lines[1][:width - 2].rstrip() + "…"]
+    return [x if len(x) <= width else x[:width - 1] + "…" for x in lines]
 
 
-def _edge(a: tuple[float, float, int, int], b: tuple[float, float, int, int]) -> str:
-    """The path from node `a` to node `b` (x, y of the top left corner, column, lane). Arrows
-    that go forward in time leave from above the middle and the ones that go back from below, so
-    a pair (`origin` / `references`) does not draw on top of itself; on the same lane and with
-    docs in between, the line arcs over (or under) them; in the same column, it goes straight
-    down (or up)."""
+def _edge(a: tuple[float, float, int, int], b: tuple[float, float, int, int], nw: float) -> str:
+    """The path from node `a` to node `b` (x, y of the top left corner, column, lane; `nw`, the
+    node's width). Arrows that go forward in time leave from above the middle and the ones that
+    go back from below, so a pair (`origin` / `references`) does not draw on top of itself; on
+    the same lane and with docs in between, the line arcs over (or under) them; in the same
+    column, it goes straight down (or up)."""
     (ax, ay, ac, al), (bx, by, bc, bl) = a, b
     if ac == bc:
         down = bl > al
-        x = ax + _NODE_W / 2 + (7 if down else -7)
+        x = ax + nw / 2 + (8 if down else -8)
         y1, y2 = (ay + _NODE_H, by) if down else (ay, by + _NODE_H)
         return f"M{x:.0f},{y1:.0f} L{x:.0f},{y2:.0f}"
     up = bc > ac
     if al == bl and abs(bc - ac) > 1:
         sy = ay if up else ay + _NODE_H
-        bend = -26 if up else 26
-        x1, x2 = ax + _NODE_W / 2, bx + _NODE_W / 2
+        bend = -24 if up else 24
+        x1, x2 = ax + nw / 2 + (12 if up else -12), bx + nw / 2 + (-12 if up else 12)
         return f"M{x1:.0f},{sy:.0f} C{x1:.0f},{sy + bend:.0f} {x2:.0f},{sy + bend:.0f} {x2:.0f},{sy:.0f}"
-    dy = -7 if up else 7
-    x1 = ax + _NODE_W if up else ax
-    x2 = bx if up else bx + _NODE_W
+    dy = -8 if up else 8
+    x1 = ax + nw if up else ax
+    x2 = bx if up else bx + nw
     y1, y2 = ay + _NODE_H / 2 + dy, by + _NODE_H / 2 + dy
-    pull = max(24, abs(x2 - x1) / 2)
+    pull = max(28, abs(x2 - x1) / 2)
     c1, c2 = (x1 + pull, x2 - pull) if up else (x1 - pull, x2 + pull)
     return f"M{x1:.0f},{y1:.0f} C{c1:.0f},{y1:.0f} {c2:.0f},{y2:.0f} {x2:.0f},{y2:.0f}"
 
 
 def link_graph(store: Store, doc: Doc) -> str:
-    """The doc's group of links as a server-drawn SVG: columns in date order (the x
-    axis is time, not to scale), one lane per type, an arrow per link styled by its kind. Empty
-    if the doc has no links."""
+    """The doc's group of links as a server-drawn SVG: columns in date order (the x axis is
+    time, not to scale), one lane per type, an arrow per link styled by its kind. The columns
+    spread over the card's width (`_FIT`) and the SVG scales a little to fill it; a group that
+    does not fit scrolls. Empty if the doc has no links."""
     group = link_group(store, doc)
     if len(group) < 2:
         return ""
     group.sort(key=lambda d: (_when(d), d.created, d.name))
     lanes = [t for t in LANES if any(d.type == t for d in group)]
     # a doc shares the previous column if it is from the same day and its lane is free there
-    pos, cols = {}, []                       # cols: [(date, lanes taken)]
+    cols: list[tuple[str, set[int]]] = []
+    where = {}
     for d in group:
         lane = lanes.index(d.type)
         if not cols or cols[-1][0] != _when(d) or lane in cols[-1][1]:
             cols.append((_when(d), set()))
         cols[-1][1].add(lane)
-        i = len(cols) - 1
-        pos[d.id] = (_LEFT + i * _COL, _TOP + lane * _LANE_H, i, lane)
-    width = _LEFT + len(cols) * _COL
+        where[d.id] = (len(cols) - 1, lane)
+    col = max(_NODE_MIN + _GAP_MIN, (_FIT - _LEFT) / len(cols))
+    nw = min(_NODE_MAX, col - _GAP_MIN)
+    pad = (col - nw) / 2
+    pos = {i: (_LEFT + c * col + pad, _TOP + lane * _LANE_H, c, lane) for i, (c, lane) in where.items()}
+    width = round(_LEFT + len(cols) * col)
     height = _TOP + len(lanes) * _LANE_H + _AXIS
     out = [f'<svg class="lgraph" width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+           f'style="min-width:{round(width * .88)}px;max-width:{round(width * 1.12)}px" '
            f'role="img" aria-label="Links of this doc over time">', "<defs>"]
     for kind in docs.LINK_KINDS:
         out.append(f'<marker id="lg-{kind}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
@@ -613,36 +653,36 @@ def link_graph(store: Store, doc: Doc) -> str:
     out.append("</defs>")
     for i, t in enumerate(lanes):
         y = _TOP + i * _LANE_H
-        out.append(f'<rect class="lg-lane" x="0" y="{y - 6}" width="{width}" height="{_LANE_H - 2}" rx="6"/>'
-                   f'<text class="lg-lane-t" x="8" y="{y + _NODE_H / 2 + 4:.0f}">{esc(t)}</text>')
-    axis_y = _TOP + len(lanes) * _LANE_H + 12
+        out.append(f'<rect class="lg-lane" x="0" y="{y - 8}" width="{width}" height="{_LANE_H - 4}" rx="6"/>'
+                   f'<text class="lg-lane-t" x="10" y="{y + _NODE_H / 2 + 4:.0f}">{esc(t)}</text>')
+    axis_y = _TOP + len(lanes) * _LANE_H + 10
     for i, (when, _) in enumerate(cols):
         if i and when == cols[i - 1][0]:
             continue
-        x = _LEFT + i * _COL
+        x = _LEFT + i * col
         if i:
-            out.append(f'<line class="lg-sep" x1="{x - 8}" y1="{_TOP - 6}" x2="{x - 8}" '
-                       f'y2="{axis_y - 4}"/>')
-        out.append(f'<text class="lg-date" x="{x}" y="{axis_y + 6}">{esc(fmt_date(when))}</text>')
+            out.append(f'<line class="lg-sep" x1="{x:.0f}" y1="{_TOP - 8}" x2="{x:.0f}" y2="{axis_y - 2}"/>')
+        out.append(f'<text class="lg-date" x="{x + pad:.0f}" y="{axis_y + 8}">{esc(fmt_date(when))}</text>')
     ids = {d.id for d in group}
     for d in group:
         for kind, dst in d.links:
             if dst in ids and kind in docs.LINK_KINDS:
-                out.append(f'<path class="lg-edge k-{kind}" d="{_edge(pos[d.id], pos[dst])}" '
+                out.append(f'<path class="lg-edge k-{kind}" d="{_edge(pos[d.id], pos[dst], nw)}" '
                            f'marker-end="url(#lg-{kind})"><title>{esc(d.name)} {esc(kind)} → '
                            f"{esc(docs.get(store, dst).name)}</title></path>")
+    chars = int((nw - 18) / 6.6)
     for d in group:
         x, y, _, _ = pos[d.id]
         cls = " here" if d.id == doc.id else ""
         cls += " closed" if d.scope == "done" else ""
-        lines = _short_title(d)
-        ty = y + (17 if len(lines) == 1 else 12) + (_NODE_H - 34) / 2
-        text = "".join(f'<tspan x="{x + 10}" y="{ty + j * 15:.0f}">{esc(s)}</tspan>'
+        lines = _short_title(d, chars)
+        ty = y + (27 if len(lines) == 1 else 19)
+        text = "".join(f'<tspan x="{x + 12:.0f}" y="{ty + j * 15:.0f}">{esc(s)}</tspan>'
                        for j, s in enumerate(lines))
         out.append(f'<a href="{doc_url(d.name)}"><g class="lg-node t-{esc(d.type)}{cls}">'
                    f"<title>{esc(d.name)}</title>"
-                   f'<rect x="{x}" y="{y}" width="{_NODE_W}" height="{_NODE_H}" rx="7"/>'
-                   f'<rect class="lg-bar" x="{x}" y="{y}" width="4" height="{_NODE_H}" rx="2"/>'
+                   f'<rect x="{x:.0f}" y="{y}" width="{nw:.0f}" height="{_NODE_H}" rx="7"/>'
+                   f'<rect class="lg-bar" x="{x:.0f}" y="{y}" width="4" height="{_NODE_H}" rx="2"/>'
                    f"<text>{text}</text></g></a>")
     out.append("</svg>")
     kinds = sorted({k for d in group for k, dst in d.links if dst in ids}, key=docs.LINK_KINDS.index)
@@ -689,8 +729,7 @@ def view_doc(store: Store, ref: str, as_text: bool = False) -> str:
             f'<h1 class="page-title">{title_html(doc.title)}</h1>'
             f'<div class="facts">{"".join(f"<span>{f}</span>" for f in facts)}</div></div>')
     # the side
-    toc = "".join(f'<a class="l{s.level}" href="#L{s.start}">{esc(s.title)}</a>'
-                  for s in reading.sections(text) if s.level > 1)
+    toc = outline(text)
     view = ""
     if MarkdownIt is not None:
         here = doc_url(ref)
@@ -709,7 +748,7 @@ def view_doc(store: Store, ref: str, as_text: bool = False) -> str:
     links += [_link_li(f"{k} (from)", None, n) for n, k in _incoming(store, current)]
     side = status_card
     if toc:
-        side += f'<div class="card toc-card"><h3>On this page</h3><nav class="toc toc-wrap">{toc}</nav></div>'
+        side += f'<div class="card toc-card"><h3>On this page</h3><nav>{toc}</nav></div>'
     if links:
         side += f'<div class="card"><h3>Links</h3><ul class="links-list">{"".join(links)}</ul></div>'
     side += (f'<div class="card"><h3>Commands</h3><div class="cmds">{copyable(f"cairn show {doc.name}")}'
