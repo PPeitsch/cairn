@@ -28,10 +28,29 @@ def test_home_counts_open_work_by_repo_handoffs_and_activity(store):
     main = _main(body)
     assert '<div class="n">2</div><div class="l">open work · 2 plan</div>' in main
     assert '<div class="n">1</div><div class="l">pending handoffs</div>' in main
-    assert 'href="/docs?repo=api">all</a>' in main and 'href="/docs?repo=web">all</a>' in main
     assert all(f'href="/doc/{d.name}"' in main for d in (a, b, h))
-    assert "to: api" in main and "handoff created" in main
+    assert "<span>to api</span>" in main and "handoff created" in main
     assert 'data-state="3"' in body                                  # events, for the reload offer
+    # a tab per repo, plus "All"; all the panels are there, only the chosen one is shown
+    assert 'data-tab="open:" role="tab" aria-selected="true">All<span class="count">2</span>' in main
+    assert 'href="/?repo=api" data-tab="open:api"' in main and 'href="/?repo=web" data-tab="open:web"' in main
+    assert '<div class="tab-panel" data-panel="open:" role="tabpanel">' in main
+    assert '<div class="tab-panel" data-panel="open:api" role="tabpanel" hidden>' in main
+    assert 'href="/docs?scope=all&repo=api">everything in api</a>' in main
+
+
+def test_home_tabs_from_the_address(store):
+    _plan(store, "cache", "api")
+    _plan(store, "colas", "web")
+    main = _main(web.route(store, "/?repo=web&feed=closed")[1])
+    assert '<div class="tab-panel" data-panel="open:web" role="tabpanel">' in main
+    assert '<div class="tab-panel" data-panel="open:" role="tabpanel" hidden>' in main
+    assert '<div class="tab-panel" data-panel="feed:closed" role="tabpanel">' in main
+    assert 'href="/?feed=closed" data-tab="open:"' in main                  # the other tabs keep it
+    assert 'href="/?repo=web" data-tab="feed:activity"' in main
+    main = _main(web.route(store, "/?repo=nope&feed=nope")[1])               # unknown: the defaults
+    assert '<div class="tab-panel" data-panel="open:" role="tabpanel">' in main
+    assert '<div class="tab-panel" data-panel="feed:activity" role="tabpanel">' in main
 
 
 def test_list_filters_with_counts(store):
