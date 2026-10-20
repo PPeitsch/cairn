@@ -63,10 +63,21 @@ def test_a_doc_as_text_with_outline_links_and_checklist(store):
     assert f'href="/doc/{a.name}"' not in pre                              # not itself
     assert 'class="todo"' in pre and 'class="done"' in pre
     assert '<span class="h">## TL;DR</span>' in pre
-    assert '<a class="l2" href="#L11">TL;DR</a>' in body                   # the outline
+    assert '<a class="fl-node" href="#L11" title="TL;DR"><span class="fl-label">TL;DR</span></a>' in body
     assert f'href="/doc/{a.name}/log"' in body
     assert 'title="1 of 2 checklist items done"' in body
     assert f'data-copy="cairn edit {a.name}"' in body
+
+
+def test_the_outline_folds_what_is_inside_each_section():
+    html_ = web.outline("# T\n\n## Uno\n\n## Dos\n\n### Dos a\n\n#### Dos a i\n\n### Dos b\n\n## `Tres`\n")
+    items = html_.split('<ol class="flow toc">')[1]
+    assert items.count('<li class="fl-group">') == 1                    # only "Dos" has sections inside
+    group = items.split('<li class="fl-group">')[1].split("</details>")[0]
+    assert 'title="3 inside"><span>3</span>' in group and "Dos a i" in group and "Uno" not in group
+    assert '<a class="fl-node" href="#L5"' in group.split("<ol")[0]     # its title goes to the section
+    assert "<code>Tres</code>" in items
+    assert web.outline("# Only a title\n") == ""
 
 
 def test_a_doc_rendered_as_markdown(store):
@@ -104,6 +115,34 @@ def test_links_both_ways(store):
     assert f'<span class="k">plan (from)</span><a href="/doc/{h.name}">' in body
     _, body = web.route(store, f"/doc/{h.name}")
     assert f'<span class="k">plan</span><a href="/doc/{plan.name}">' in body
+
+
+def test_the_group_of_links_as_a_diagram(store):
+    plan, otro, suelto = _plan(store), _plan(store, "otro"), _plan(store, "suelto")
+    h = docs.handoff_new(store, "api", "seguir", plans=[plan.name], repo="api").doc
+    docs.link(store, otro.name, "origin", plan.name)
+    edit.apply(store, otro.id, set_={"note": "x"})
+    edit.apply(store, h.id, body="# api — handoff: <b>seguir</b> & más\n")
+
+    # transitive, both ways: from the handoff, the other plan comes through the first one
+    assert {d.name for d in web.link_group(store, docs.find(store, h.name))} == {plan.name, otro.name, h.name}
+    _, body = web.route(store, f"/doc/{h.name}")
+    graph = body.split('<section class="card lgraph-card">')[1].split("</section>")[0]
+    assert "3 docs" in graph and graph.count('class="lg-node') == 3
+    assert f'<a href="/doc/{h.name}"><g class="lg-node t-handoff here">' in graph
+    assert "&lt;b&gt;seguir&lt;/b&gt;" in graph and "<b>" not in graph
+    assert 'class="lg-edge k-plan"' in graph and 'class="lg-edge k-origin"' in graph
+    assert "<span>plan" not in graph and '<i class="k-plan"></i>plan' in graph
+    assert "lgraph-card" not in web.route(store, f"/doc/{suelto.name}")[1]   # no links, no diagram
+
+
+def test_link_group_is_bounded(store, monkeypatch):
+    monkeypatch.setattr(web, "GROUP_MAX", 3)
+    plans = [_plan(store, f"p{i}") for i in range(5)]
+    for a, b in zip(plans, plans[1:], strict=False):
+        docs.link(store, b.name, "origin", a.name)
+    group = web.link_group(store, plans[2])
+    assert len(group) == 3 and group[0].id == plans[2].id     # the doc and its nearest
 
 
 def test_history_and_a_revision(store):

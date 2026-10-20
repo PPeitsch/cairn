@@ -29,6 +29,14 @@
   document.querySelectorAll(".filter-form select").forEach((s) =>
     s.addEventListener("change", () => s.form.submit()));
 
+  // ── the group of links: if it does not fit, start scrolled to this doc
+  document.querySelectorAll(".lgraph-scroll").forEach((box) => {
+    const here = box.querySelector(".lg-node.here rect");
+    if (!here || box.scrollWidth <= box.clientWidth) return;
+    const x = here.getBBox().x + here.getBBox().width / 2;
+    box.scrollLeft = Math.max(0, x - box.clientWidth / 2);
+  });
+
   // ── copy: code blocks and [data-copy]
   const copy = async (text, el) => {
     try { await navigator.clipboard.writeText(text); } catch { return; }
@@ -46,10 +54,21 @@
     const byId = new Map(toc.map((a) => [a.hash.slice(1), a]));
     const targets = [...byId.keys()].map((id) => document.getElementById(id)).filter(Boolean);
     const visible = new Set();
+    // the section being read opens on its own, and closes again when the reading leaves it
+    // (unless it was opened by hand)
+    let opened = null;
+    document.querySelectorAll(".flow summary").forEach((s) =>
+      s.addEventListener("click", () => { if (s.parentElement === opened) opened = null; }));
     const mark = () => {
       const first = targets.find((t) => visible.has(t)) ||
         [...targets].reverse().find((t) => t.getBoundingClientRect().top < 120);
-      toc.forEach((a) => a.classList.toggle("on", first && a.hash.slice(1) === first.id));
+      toc.forEach((a) => a.classList.toggle("on", !!first && a.hash.slice(1) === first.id));
+      const on = toc.find((a) => a.classList.contains("on"));
+      const group = on ? on.closest("details") : null;
+      if (group === opened) return;
+      if (opened) opened.open = false;
+      opened = group && !group.open ? group : null;
+      if (opened) opened.open = true;
     };
     const io = new IntersectionObserver((entries) => {
       entries.forEach((en) => en.isIntersecting ? visible.add(en.target) : visible.delete(en.target));
