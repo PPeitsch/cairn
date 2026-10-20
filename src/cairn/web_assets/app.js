@@ -29,6 +29,45 @@
   document.querySelectorAll(".filter-form select").forEach((s) =>
     s.addEventListener("change", () => s.form.submit()));
 
+  // ── tabs switch in place (their links work without this) and keep the address in step
+  document.querySelectorAll(".tab[data-tab]").forEach((tab) => tab.addEventListener("click", (e) => {
+    const group = tab.dataset.tab.split(":")[0];
+    const box = tab.closest(".tabbed");
+    if (!box || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    box.querySelectorAll(".tab[data-tab]").forEach((t) => {
+      t.classList.toggle("on", t === tab);
+      t.setAttribute("aria-selected", t === tab ? "true" : "false");
+    });
+    box.querySelectorAll(`.tab-panel[data-panel^="${group}:"]`).forEach((p) => {
+      p.hidden = p.dataset.panel !== tab.dataset.tab;
+    });
+    const url = new URL(location.href);
+    const key = { open: "repo", feed: "feed" }[group];
+    const value = tab.dataset.tab.slice(group.length + 1);
+    if (key && value && value !== "activity") url.searchParams.set(key, value);
+    else if (key) url.searchParams.delete(key);
+    history.replaceState(null, "", url);
+  }));
+
+  // a tab bar that does not fit scrolls with the wheel too, and fades where there is more
+  document.querySelectorAll(".tabs").forEach((bar) => {
+    const edges = () => {
+      const left = bar.scrollLeft > 2;
+      const right = bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 2;
+      if (left || right) bar.dataset.more = left && right ? "both" : left ? "left" : "right";
+      else delete bar.dataset.more;
+    };
+    bar.addEventListener("wheel", (e) => {
+      if (bar.scrollWidth <= bar.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      bar.scrollLeft += e.deltaY;
+    }, { passive: false });
+    bar.addEventListener("scroll", edges, { passive: true });
+    addEventListener("resize", edges);
+    edges();
+  });
+
   // ── the group of links: if it does not fit, start scrolled to this doc
   document.querySelectorAll(".lgraph-scroll").forEach((box) => {
     const here = box.querySelector(".lg-node.here rect");
