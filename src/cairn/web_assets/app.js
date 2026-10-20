@@ -50,12 +50,23 @@
     history.replaceState(null, "", url);
   }));
 
-  // a tab bar that does not fit scrolls with the wheel too
-  document.querySelectorAll(".tabs").forEach((bar) => bar.addEventListener("wheel", (e) => {
-    if (bar.scrollWidth <= bar.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-    e.preventDefault();
-    bar.scrollLeft += e.deltaY;
-  }, { passive: false }));
+  // a tab bar that does not fit scrolls with the wheel too, and fades where there is more
+  document.querySelectorAll(".tabs").forEach((bar) => {
+    const edges = () => {
+      const left = bar.scrollLeft > 2;
+      const right = bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 2;
+      if (left || right) bar.dataset.more = left && right ? "both" : left ? "left" : "right";
+      else delete bar.dataset.more;
+    };
+    bar.addEventListener("wheel", (e) => {
+      if (bar.scrollWidth <= bar.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      bar.scrollLeft += e.deltaY;
+    }, { passive: false });
+    bar.addEventListener("scroll", edges, { passive: true });
+    addEventListener("resize", edges);
+    edges();
+  });
 
   // ── the group of links: if it does not fit, start scrolled to this doc
   document.querySelectorAll(".lgraph-scroll").forEach((box) => {

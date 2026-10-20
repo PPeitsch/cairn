@@ -112,14 +112,11 @@ h1, h2, h3 { letter-spacing: -.015em; }
 .tabs { display: flex; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid var(--line); overflow-x: auto;
   scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
-/* shadows at the edges when there are more tabs to scroll to */
-.tabs { background:
-  linear-gradient(to right, var(--surface) 40%, transparent) left / 28px 100% no-repeat local,
-  linear-gradient(to left, var(--surface) 40%, transparent) right / 28px 100% no-repeat local,
-  radial-gradient(farthest-side at 0 50%, color-mix(in srgb, var(--fg) 16%, transparent), transparent)
-    left / 12px 100% no-repeat scroll,
-  radial-gradient(farthest-side at 100% 50%, color-mix(in srgb, var(--fg) 16%, transparent), transparent)
-    right / 12px 100% no-repeat scroll; }
+/* the tabs fade out at an edge when there are more to scroll to (the script says which) */
+.tabs[data-more="right"] { mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); }
+.tabs[data-more="left"] { mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); }
+.tabs[data-more="both"] { mask-image: linear-gradient(to right, transparent, #000 48px,
+  #000 calc(100% - 48px), transparent); }
 .tabbed > .tabs:first-child { padding-top: 8px; }
 .tab { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px 8px; font-size: 13.5px;
   color: var(--muted); white-space: nowrap; border-bottom: 2px solid transparent; margin-bottom: -1px; }
