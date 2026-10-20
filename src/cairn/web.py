@@ -165,13 +165,14 @@ def checklist(body: str) -> tuple[int, int]:
     return done, total
 
 
-def progress(done: int, total: int, big: bool = False) -> str:
+def progress(done: int, total: int, big: bool = False, full: bool = False) -> str:
     if not total:
         return ""
     pct = round(100 * done / total)
-    return (f'<span class="prog{" big" if big else ""}" title="{done} of {total} checklist items done">'
+    cls = "".join(c for c, on in ((" big", big), (" full", full)) if on)
+    return (f'<span class="prog{cls}" title="{done} of {total} checklist items done">'
             f'<span class="track"><span class="fill" style="width:{pct}%"></span></span>'
-            f"{done}/{total}</span>")
+            f'<span class="num"><b>{done}</b>/{total}</span></span>')
 
 
 def _summary(doc: Doc) -> str:
@@ -179,29 +180,45 @@ def _summary(doc: Doc) -> str:
     return s[:237] + "..." if len(s) > 240 else s
 
 
-def item(doc: Doc, show_repo: bool = True, extra: str = "", sum_html: str | None = None) -> str:
-    """A doc in a list: type, title, status, and a line of facts (and its summary)."""
-    facts = [f'<span class="mono">{esc(doc.name)}</span>']
-    if show_repo:
-        facts.append(f'<a href="/docs{_qs({"scope": "all", "repo": docs.repo_label(doc)})}">'
-                     f"{esc(docs.repo_label(doc))}</a>")
-    if doc.type == "handoff" and doc.scope == "wip":
-        facts.append(f"to: {esc(', '.join(docs.handoff_to(doc)) or docs.CROSS_REPO)}")
+_SAID = {"proposed", "pending", "monitoring"}      # open and in progress are the usual: not said
+
+
+def state_words(doc: Doc) -> str:
+    """A doc's status in words, only when it says something, and `quiet` for open work left alone."""
+    out = []
     if doc.scope == "done":
-        facts.append(f"closed {esc(doc.date_closed())}")
-    quiet = doc.scope == "wip" and _days(doc.last_event) >= STALE_DAYS
-    facts.append(f'<span class="{"stale" if quiet else ""}">'
-                 f'{"quiet, " if quiet else ""}touched {esc(ago(doc.last_event))}</span>')
-    if doc.scope != "ref":
-        facts.append(progress(*checklist(doc.body)))
-    if extra:
-        facts.append(extra)
+        key = doc.status or "completed"
+        out.append(f'<span class="st st-{esc(key)}">{esc(key.replace("_", " "))}</span>')
+    elif doc.scope == "wip" and doc.status in _SAID:
+        out.append(f'<span class="st">{esc(doc.status)}</span>')
+    if doc.scope == "wip" and _days(doc.last_event) >= STALE_DAYS:
+        out.append('<span class="st quiet">quiet</span>')
+    return "".join(out)
+
+
+def handoff_to(doc: Doc) -> str:
+    return f'<span class="to">to {esc(", ".join(docs.handoff_to(doc)) or docs.CROSS_REPO)}</span>'
+
+
+def card(doc: Doc, show_repo: bool = True, sum_html: str | None = None) -> str:
+    """A doc as a card: repo, type, status and when; the title, its summary and, at the bottom,
+    its checklist progress. `sum_html=""` leaves the summary out."""
+    repo = f'<span class="repo">{esc(docs.repo_label(doc))}</span>' if show_repo else ""
+    when = (f'<span class="when" title="closed">{esc(fmt_date(doc.date_closed()))}</span>'
+            if doc.scope == "done" else f'<span class="when">{esc(ago(doc.last_event))}</span>')
     s = sum_html if sum_html is not None else title_html(_summary(doc))
-    return (f'<li class="item">{type_badge(doc.type)}'
-            f'<a class="t" href="{doc_url(doc.name)}">{title_html(doc.title)}</a>'
-            f'<span class="right">{status_badge(doc)}</span>'
-            f'<div class="meta">{"".join(f"<span>{f}</span>" for f in facts if f)}</div>'
-            + (f'<div class="sum">{s}</div>' if s else "") + "</li>")
+    prog = progress(*checklist(doc.body), full=True) if doc.scope == "wip" else ""
+    to = handoff_to(doc) if doc.type == "handoff" and doc.scope == "wip" else ""
+    return (f'<li class="dcard"><div class="c-top">{repo}<span class="kind">{esc(doc.type)}</span>'
+            f'{state_words(doc)}<span class="sp"></span>{when}</div>'
+            f'<a class="t" href="{doc_url(doc.name)}" title="{esc(doc.name)}">{title_html(doc.title)}</a>'
+            + (f'<div class="c-to">{to}</div>' if to else "")
+            + (f'<div class="sum">{s}</div>' if s else "")
+            + (f'<div class="c-bot">{prog}</div>' if prog else "") + "</li>")
+
+
+def cards(items: list[str]) -> str:
+    return f'<ul class="cards">{"".join(items)}</ul>'
 
 
 def page(title: str, body: str, store: Store | None = None, active: str = "", q: str = "") -> str:
@@ -258,28 +275,6 @@ def _feed(store: Store, lines: list[history.LogLine], by_day: bool = False) -> s
     return f'<ul class="feed">{"".join(out)}</ul>' if out else '<div class="empty">No activity.</div>'
 
 
-def row(doc: Doc, show_repo: bool = True) -> str:
-    """A doc in one line: type, status, title (its summary as the tooltip) and, to the right,
-    repo, checklist progress and when it was touched."""
-    key = doc.status or "open"
-    quiet = doc.scope == "wip" and _days(doc.last_event) >= STALE_DAYS
-    meta = []
-    if show_repo:
-        meta.append(f'<span class="repo">{esc(docs.repo_label(doc))}</span>')
-    if doc.type == "handoff" and doc.scope == "wip":
-        meta.append(f'<span>to {esc(", ".join(docs.handoff_to(doc)) or docs.CROSS_REPO)}</span>')
-    if doc.scope == "done":
-        meta.append(f"<span>closed {esc(fmt_date(doc.date_closed()))}</span>")
-    elif doc.scope != "ref":
-        meta.append(progress(*checklist(doc.body)))
-    meta.append(f'<span class="{"stale" if quiet else "when"}">{"quiet, " if quiet else ""}'
-                f"{esc(ago(doc.last_event))}</span>")
-    return (f'<li class="row-item">{type_badge(doc.type)}'
-            f'<span class="sdot s-{esc(key)}" title="{esc(key.replace("_", " "))}"></span>'
-            f'<a class="t" href="{doc_url(doc.name)}" title="{esc(_summary(doc) or doc.name)}">'
-            f'{title_html(doc.title)}</a><span class="r-meta">{"".join(m for m in meta if m)}</span></li>')
-
-
 def tabs(group: str, current: str, items: list[tuple[str, str, int | None, str]]) -> str:
     """A tab bar: (key, label, count, href) each. The hrefs work without the script, which
     switches the panels (`data-panel="<group>:<key>"`) in place."""
@@ -299,26 +294,33 @@ def _panel(group: str, key: str, current: str, html_: str) -> str:
 
 
 def view_home(store: Store, repo: str = "", feed: str = "activity") -> str:
-    """What is going on: counts, the open work in one card with a tab per repo (`repo`), the
-    pending handoffs, and the recent activity or what closed this week (`feed`)."""
+    """What is going on: counts, the handoffs waiting to be taken, the open work as cards with a
+    tab per repo (`repo`), and the recent activity or what closed this week (`feed`)."""
     wip = docs.all_docs(store, ("wip",))
     handoffs = [d for d in wip if d.type == "handoff"]
     work = [d for d in wip if d.type != "handoff"]
     refs = docs.all_docs(store, ("ref",))
     _, closed = docs.weekly(store, 7)
     by_type = {t: sum(1 for d in work if d.type == t) for t in ("bug", "infra", "plan")}
-    bar = "".join(f'<span class="t-{t}" style="flex:{n};background:currentColor"></span>'
-                  for t, n in by_type.items() if n)
     split = " · ".join(f"{n} {t}" for t, n in by_type.items() if n)
     stats = (
         f'<a class="card stat" href="/docs"><div class="n">{len(work)}</div>'
-        f'<div class="l">open work{" · " + split if split else ""}</div><div class="bar">{bar}</div></a>'
+        f'<div class="l">open work{" · " + split if split else ""}</div></a>'
         f'<a class="card stat" href="/docs?type=handoff"><div class="n">{len(handoffs)}</div>'
         '<div class="l">pending handoffs</div></a>'
         f'<a class="card stat" href="/weekly"><div class="n">{len(closed)}</div>'
         '<div class="l">closed in the last 7 days</div></a>'
         f'<a class="card stat" href="/docs?scope=ref"><div class="n">{len(refs)}</div>'
         '<div class="l">references</div></a>')
+
+    # the handoffs, a strip above everything: they are what waits for the next conversation
+    waiting = ""
+    if handoffs:
+        lis = "".join(f'<li><a class="t" href="{doc_url(d.name)}" title="{esc(_summary(d) or d.name)}">'
+                      f"{title_html(d.title)}</a>{handoff_to(d)}"
+                      f'<span class="when">{esc(ago(d.last_event))}</span></li>' for d in handoffs)
+        waiting = (f'<section class="waiting"><div class="waiting-h">Waiting for you<span class="count">'
+                   f"{len(handoffs)}</span></div><ul>{lis}</ul></section>")
 
     # the open work: "All" and a tab per repo, the busiest first
     groups: dict[str, list[Doc]] = {}
@@ -329,21 +331,14 @@ def view_home(store: Store, repo: str = "", feed: str = "activity") -> str:
     keep = {"feed": feed if feed != "activity" else ""}
     bar_ = tabs("open", repo, [("", "All", len(work), "/" + _qs(keep))]
                 + [(r, r, len(groups[r]), "/" + _qs({"repo": r, **keep})) for r in order])
-
-    def rows(ds: list[Doc], show_repo: bool) -> str:
-        return f'<ul class="rows">{"".join(row(d, show_repo) for d in ds)}</ul>'
-
-    panels = _panel("open", "", repo, rows(work, True) if work else '<div class="empty">Nothing open.</div>')
-    panels += "".join(_panel("open", r, repo, rows(groups[r], False)
+    panels = _panel("open", "", repo, cards([card(d) for d in work]) if work
+                    else '<div class="empty">Nothing open.</div>')
+    panels += "".join(_panel("open", r, repo, cards([card(d, False) for d in groups[r]])
                              + f'<a class="more-row" href="/docs{_qs({"scope": "all", "repo": r})}">'
                              f"everything in {esc(r)}</a>") for r in order)
-    left = (f'<section class="card tabbed"><div class="card-h">Open work</div>{bar_}{panels}</section>')
+    left = f'<section class="card tabbed"><div class="card-h">Open work</div>{bar_}{panels}</section>'
 
-    # the side: handoffs, then activity / closed this week
-    right = ""
-    if handoffs:
-        right += (f'<section class="card"><div class="card-h">Pending handoffs<span class="count">'
-                  f"{len(handoffs)}</span></div>{rows(handoffs, True)}</section>")
+    # the side: activity / closed this week
     feed = feed if feed in ("activity", "closed") else "activity"
     keep = {"repo": repo}
     fbar = tabs("feed", feed, [("activity", "Activity", None, "/" + _qs(keep)),
@@ -351,13 +346,14 @@ def view_home(store: Store, repo: str = "", feed: str = "activity") -> str:
                                 "/" + _qs({**keep, "feed": "closed"}))])
     activity = (_feed(store, history.log(store, None, 9))
                 + '<a class="more-row" href="/activity">all activity</a>')
-    done = ((rows(closed[:10], True) if closed else '<div class="empty">Nothing closed.</div>')
+    done = ((cards([card(d, sum_html="") for d in closed[:10]]) if closed
+             else '<div class="empty">Nothing closed.</div>')
             + '<a class="more-row" href="/weekly">the weekly</a>')
-    right += (f'<section class="card tabbed">{fbar}{_panel("feed", "activity", feed, activity)}'
-              f'{_panel("feed", "closed", feed, done)}</section>')
+    right = (f'<section class="card tabbed">{fbar}{_panel("feed", "activity", feed, activity)}'
+             f'{_panel("feed", "closed", feed, done)}</section>')
     body = (f'<h1 class="page-title">Working docs</h1><p class="page-sub">{esc(store.config.node)} · '
             f"{store.projection.count_events()} events · {len(docs.all_docs(store))} docs</p>"
-            f'<div class="stats">{stats}</div>'
+            f'<div class="stats">{stats}</div>{waiting}'
             f'<div class="grid-2 home">{left}<aside class="home-side">{right}</aside></div>')
     return page("Home", body, store, "home")
 
@@ -409,10 +405,8 @@ def view_list(store: Store, scope: str = "wip", repo: str = "", type_: str = "")
     shown = [d for d in by_repo if not repo or docs.repo_label(d) == repo]
     bar = filter_bar(current, count(by_type, lambda d: d.type), count(by_repo, docs.repo_label), len(shown))
     title = {"wip": "Open", "done": "Closed", "ref": "References", "all": "All docs"}[scope]
-    items = "".join(item(d) for d in shown)
     body = (f'<h1 class="page-title">{title}</h1>{bar}'
-            + (f'<div class="card"><ul class="items">{items}</ul></div>' if shown
-               else '<div class="empty">Nothing here.</div>'))
+            + (cards([card(d) for d in shown]) if shown else '<div class="empty">Nothing here.</div>'))
     return page(title, body, store, {"wip": "open"}.get(scope, scope))
 
 
@@ -877,15 +871,14 @@ def view_weekly(store: Store, days: int = 7) -> str:
     groups: dict[str, list[Doc]] = {}
     for d in sorted(closed, key=docs.repo_label):
         groups.setdefault(docs.repo_label(d), []).append(d)
-    cards = "".join(
-        f'<section class="card" style="margin-bottom:14px"><div class="card-h">{esc(repo)}'
-        f'<span class="count">{len(ds)}</span></div>'
-        f'<ul class="items">{"".join(item(d, show_repo=False) for d in ds)}</ul></section>'
+    sections = "".join(
+        f'<section class="group"><h2 class="group-h">{esc(repo)}<span class="count">{len(ds)}</span></h2>'
+        f"{cards([card(d, show_repo=False) for d in ds])}</section>"
         for repo, ds in groups.items())
     body = (f'<h1 class="page-title">Closed since {esc(since)}</h1>'
             f'<p class="page-sub">{len(closed)} piece(s) of work in the last {days} days</p>'
             f'<div class="toolbar"><nav class="seg seg-lg" aria-label="window">{seg}</nav></div>'
-            + (cards or '<div class="empty">Nothing closed in this window.</div>'))
+            + (sections or '<div class="empty">Nothing closed in this window.</div>'))
     return page("Weekly", body, store, "weekly")
 
 
@@ -895,12 +888,11 @@ def view_search(store: Store, q: str) -> str:
     if not q.strip():
         return page("Search", f'<h1 class="page-title">Search</h1>{form}', store, q=q)
     hits, total = docs.search_fts(store, q, limit=50)
-    items = "".join(item(h.doc, sum_html=esc(h.snippet).replace("«", "<mark>").replace("»", "</mark>"))
-                    for h in hits)
+    found = cards([card(h.doc, sum_html=esc(h.snippet).replace("«", "<mark>").replace("»", "</mark>"))
+                   for h in hits])
     body = (f'<h1 class="page-title">Search</h1>{form}'
             f'<p class="page-sub">{esc(docs.fts_header(q, hits, total))}</p>'
-            + (f'<div class="card"><ul class="items">{items}</ul></div>' if hits
-               else '<div class="empty">No doc matches.</div>'))
+            + (found if hits else '<div class="empty">No doc matches.</div>'))
     return page(f"search: {q}", body, store, q=q)
 
 

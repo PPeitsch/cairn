@@ -29,7 +29,7 @@ def test_home_counts_open_work_by_repo_handoffs_and_activity(store):
     assert '<div class="n">2</div><div class="l">open work · 2 plan</div>' in main
     assert '<div class="n">1</div><div class="l">pending handoffs</div>' in main
     assert all(f'href="/doc/{d.name}"' in main for d in (a, b, h))
-    assert "<span>to api</span>" in main and "handoff created" in main
+    assert '<span class="to">to api</span>' in main and "handoff created" in main
     assert 'data-state="3"' in body                                  # events, for the reload offer
     # a tab per repo, plus "All"; all the panels are there, only the chosen one is shown
     assert 'data-tab="open:" role="tab" aria-selected="true">All<span class="count">2</span>' in main
@@ -51,6 +51,23 @@ def test_home_tabs_from_the_address(store):
     main = _main(web.route(store, "/?repo=nope&feed=nope")[1])               # unknown: the defaults
     assert '<div class="tab-panel" data-panel="open:" role="tabpanel">' in main
     assert '<div class="tab-panel" data-panel="feed:activity" role="tabpanel">' in main
+
+
+def test_cards_say_the_status_only_when_it_says_something(store, monkeypatch):
+    a = _plan(store, "cache", "api")
+    b = _plan(store, "colas", "web")
+    edit.apply(store, b.id, set_={"status": "proposed"})
+    c = _plan(store, "viejo", "web")
+    docs.close(store, c.name, discard="no va")
+    main = _main(web.route(store, "/docs")[1])
+    assert main.count('<li class="dcard">') == 2 and '<span class="st">proposed</span>' in main
+    assert "in progress" not in main and "quiet" not in main                 # the usual is not said
+    assert '<span class="st st-discarded">discarded</span>' in _main(web.route(store, "/docs?scope=done")[1])
+    monkeypatch.setenv("CAIRN_NOW", "2026-04-10T12:00:00+00:00")             # a month later
+    assert '<span class="st quiet">quiet</span>' in _main(web.route(store, "/docs")[1])
+    assert "Waiting for you" not in _main(web.route(store, "/")[1])          # no handoffs, no strip
+    docs.handoff_new(store, "api", "seguir", to=["api"], plans=[a.name], repo="api")
+    assert '<section class="waiting">' in _main(web.route(store, "/")[1])
 
 
 def test_list_filters_with_counts(store):
