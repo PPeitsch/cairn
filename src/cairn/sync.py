@@ -21,6 +21,10 @@ from an unknown or revoked node, nor events without a valid signature. A line th
 (a write cut short on the origin node) is copied anyway, so the logs stay prefixes, and the
 projection ignores it.
 
+The greeting carries the protocol (`PROTO`), which has to match, and the cairn version, which does
+not: nodes on different versions keep syncing, and the client reports a different one as a notice
+so the node left behind gets upgraded.
+
 Restore (`sync --restore <remote>`): a node that lost its data and was reinitialized with the
 same name asks for its own log. The hello carries `"restore": true`; the server answers with the
 keys it has on record for that node (`"keys": {"key", "old"}`) and also sends the chunks of the
@@ -51,7 +55,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cairn import config
+from cairn import __version__, config
 from cairn.events import Event, EventError
 from cairn.store import CairnError, Store
 
@@ -69,6 +73,7 @@ class Result:
     sent: int = 0           # events the other side accepted
     received: int = 0       # events this node accepted
     errors: list[str] = field(default_factory=list)
+    notices: list[str] = field(default_factory=list)    # worth seeing, but the sync went fine
 
     @property
     def ok(self) -> bool:
@@ -109,7 +114,7 @@ class Channel:
 
 
 def _hello(store: Store, **extra) -> dict:
-    return {"cairn": "sync", "v": PROTO, "node": store.config.node, **extra}
+    return {"cairn": "sync", "v": PROTO, "node": store.config.node, "version": __version__, **extra}
 
 
 def _check_hello(msg: dict) -> str:
@@ -119,6 +124,17 @@ def _check_hello(msg: dict) -> str:
     if not isinstance(node, str) or not node:
         raise ProtocolError("greeting without a node name")
     return node
+
+
+def _version_notice(peer: str, hello: dict) -> str | None:
+    """Whether two nodes can sync is up to `PROTO`; a node left behind on an older cairn syncs
+    all the same, but does not show what it cannot read: it is said so it gets upgraded."""
+    theirs = hello.get("version")
+    if theirs == __version__:
+        return None
+    if not isinstance(theirs, str):         # the greeting carries the version from 0.5.0 on
+        return f"{peer} runs a cairn older than 0.5.0, this node {__version__}: upgrade it"
+    return f"{peer} runs cairn {theirs}, this node {__version__}: upgrade the older one"
 
 
 # ──────────────────────────────────────────────────────────────── what to send, what to accept
@@ -304,6 +320,8 @@ def client(store: Store, ch: Channel, name: str, restore: bool = False,
     hello = ch.recv()
     peer = _check_hello(hello)
     res.peer = peer
+    if notice := _version_notice(peer, hello):
+        res.notices.append(notice)
     if peer == store.config.node:
         raise ProtocolError(f"the remote {name} is this very node ({peer})")
     if peer not in store.config.peers:

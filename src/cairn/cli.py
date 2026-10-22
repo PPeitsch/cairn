@@ -606,6 +606,8 @@ def cmd_sync(args) -> int:
             print(f"{when}{r.remote} ({r.peer or '?'}): {r.sent} sent, {r.received} received"
                   + ("" if r.ok else f", {len(r.errors)} error(s)"))
         sys.stdout.flush()
+        for n in r.notices:
+            warn(f"  [notice] {n}")
         for e in r.errors:
             warn(f"  [error] {e}")
     return 0 if all(r.ok for r in results) else 1
