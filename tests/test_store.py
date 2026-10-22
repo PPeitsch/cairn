@@ -180,3 +180,43 @@ def test_fts_index(store):
     rows = store.projection.db.execute(
         "SELECT name FROM docs_fts WHERE docs_fts MATCH 'endpoint'").fetchall()
     assert len(rows) == 1
+
+
+def _cairn_version(store):
+    return store.projection.db.execute("SELECT value FROM info WHERE key = 'cairn'").fetchone()[0]
+
+
+def test_an_upgrade_projects_what_the_older_version_could_not_read(cfg, peer, monkeypatch):
+    from cairn import events, projection
+    vps = peer("vps")
+    monkeypatch.setattr(projection, "__version__", "0.4.0")
+    with Store(config.load()) as s:
+        doc = create(s)
+        head = s.projection.head(doc)
+    other = vps.sign(Event.new(node="vps", ts="2026-03-11T00:00:00.000000+00:00", op="edit", doc_id=doc,
+                               payload={"body": "desde el vps"}, prev=head))
+    EventLog(cfg.logs_dir, "vps").append([other])
+    # a newer node wrote an operation this one does not know yet
+    monkeypatch.setattr(events, "OPS", events.OPS - {"edit"})
+    with Store(config.load()) as s:
+        assert any("unknown operation" in p for p in s.problems)
+        assert s.state(doc).body != "desde el vps"
+    # upgraded: it reads the operation, and the first open rebuilds past `log_pos`
+    monkeypatch.setattr(events, "OPS", events.OPS | {"edit"})
+    monkeypatch.setattr(projection, "__version__", "0.5.0")
+    with Store(config.load()) as s:
+        assert s.state(doc).body == "desde el vps" and not s.problems
+        assert _cairn_version(s) == "0.5.0"
+
+
+def test_an_older_version_still_running_leaves_the_projection_alone(cfg, monkeypatch):
+    from cairn import projection
+    monkeypatch.setattr(projection, "__version__", "0.6.0")
+    with Store(cfg) as s:
+        create(s)
+    monkeypatch.setattr(projection, "__version__", "0.5.0")
+    with Store(cfg) as s:
+        s.projection.db.execute("DELETE FROM docs")       # a rebuild would bring it back
+        s.projection.db.commit()
+    with Store(cfg) as s:
+        assert s.projection.doc_ids() == [] and _cairn_version(s) == "0.6.0"

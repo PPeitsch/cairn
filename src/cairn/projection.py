@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from operator import attrgetter
 from pathlib import Path
 
-from cairn import vocab
+from cairn import __version__, vocab
 from cairn.events import CREATE_OPS, Event
 
 SCHEMA_VERSION = 2
@@ -188,6 +188,14 @@ def chain(events: list[Event]) -> tuple[list[Event], set[str], set[str]]:
 
 # ──────────────────────────────────────────────────────────────── projection
 
+def _release(version: str | None) -> tuple[int, ...]:
+    """`"0.5.0"` as `(0, 5, 0)`; no version (a projection from before 0.5.0) sorts first."""
+    try:
+        return tuple(int(p) for p in version.split("."))
+    except (AttributeError, ValueError):
+        return ()
+
+
 class Projection:
     def __init__(self, path: Path):
         self.path = path
@@ -195,17 +203,25 @@ class Projection:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode = WAL")
-        self.db.execute(_SCHEMA.split(";")[0])          # `info`, to read the version first
-        row = self.db.execute("SELECT value FROM info WHERE key = 'schema'").fetchone()
-        if row is not None and int(row["value"]) != SCHEMA_VERSION:
-            # the projection is disposable: with another schema its tables are dropped (emptying
-            # them is not enough: they keep the old columns) and it is rebuilt from the log
+        self.db.execute(_SCHEMA.split(";")[0])          # `info`, to read the versions first
+        info = {r["key"]: r["value"] for r in self.db.execute("SELECT key, value FROM info")}
+        # the projection is disposable: with another schema its tables are dropped (emptying
+        # them is not enough: they keep the old columns) and it is rebuilt from the log
+        stale = "schema" in info and int(info["schema"]) != SCHEMA_VERSION
+        # an older cairn leaves out what it cannot read and moves `log_pos` past it, so the first
+        # open after an upgrade rebuilds too. An older one still running (an MCP server started
+        # before the upgrade) leaves it alone: it would only rebuild it back and forth.
+        projected_by = _release(info.get("cairn"))
+        stale = stale or ("schema" in info and projected_by < _release(__version__))
+        if stale:
             with self.db:
                 for t in _TABLES:
                     self.db.execute(f"DROP TABLE IF EXISTS {t}")
         self.db.executescript(_SCHEMA)
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO info VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
+            if projected_by <= _release(__version__):
+                self.db.execute("INSERT OR REPLACE INTO info VALUES ('cairn', ?)", (__version__,))
 
     def close(self) -> None:
         self.db.close()
