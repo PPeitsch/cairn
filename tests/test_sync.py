@@ -763,3 +763,64 @@ def test_an_edit_reaches_the_remote_on_its_own(pair, tmp_path, monkeypatch):
     else:
         log = (laptop.root / "data" / "sync.log")
         pytest.fail(f"no llegó al vps; sync.log:\n{log.read_text() if log.exists() else '(vacío)'}")
+
+
+# ──────────────────────────────────────────────────────────────── versions
+
+def _vps_says(monkeypatch, **fields):
+    """The vps greets as another cairn would: `version=None` leaves the field out."""
+    from cairn import sync
+    real = sync._hello
+
+    def hello(store, **extra):
+        msg = real(store, **extra)
+        if store.config.node == "vps":
+            msg.update(fields)
+            msg = {k: v for k, v in msg.items() if v is not None}
+        return msg
+    monkeypatch.setattr(sync, "_hello", hello)
+
+
+def test_same_version_no_notice(pair):
+    res, srv = run_sync(*pair)
+    assert res.ok and res.notices == [] and srv.notices == []
+
+
+def test_another_version_syncs_with_a_notice(pair, monkeypatch):
+    from cairn import __version__
+    laptop, vps = pair
+    vps.new("demo", "desde_vps")
+    _vps_says(monkeypatch, version="0.4.9")
+    res, _ = run_sync(laptop, vps)
+    assert res.ok and res.received == 1
+    assert res.notices == [f"vps runs cairn 0.4.9, this node {__version__}: upgrade the older one"]
+
+
+def test_a_greeting_without_version_is_older(pair, monkeypatch):
+    _vps_says(monkeypatch, version=None)
+    res, _ = run_sync(*pair)
+    assert res.ok and "vps runs a cairn older than 0.5.0" in res.notices[0]
+
+
+OLD_PEER = """\
+import os, sys
+# like FAKE_SSH, with a peer from before the version went in the greeting
+os.environ.update({k[len("PEER_"):]: v for k, v in os.environ.items() if k.startswith("PEER_")})
+from cairn import cli, sync
+sync._hello = lambda store, **extra: {"cairn": "sync", "v": sync.PROTO, "node": store.config.node, **extra}
+sys.exit(cli.main(["sync-peer", "--stdio", "--as", "laptop"]))
+"""
+
+
+def test_cli_shows_the_notice_even_quiet(pair, tmp_path, monkeypatch, capsys):
+    laptop, vps = pair
+    fake = tmp_path / "fake_ssh.py"
+    fake.write_text(OLD_PEER)
+    for k, v in vps.env().items():
+        monkeypatch.setenv(f"PEER_{k}", v)
+    monkeypatch.setenv("CAIRN_SSH", f"{sys.executable} {fake}")
+    laptop.use()
+    access.remote_add("vps", "ssh://cairn@vps.example")
+    assert cli.main(["sync", "--quiet"]) == 0
+    out = capsys.readouterr()
+    assert out.out == "" and "[notice] vps runs a cairn older than 0.5.0" in out.err
