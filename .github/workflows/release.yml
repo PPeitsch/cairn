@@ -1,0 +1,35 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches __version__
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/cairn/__init__.py)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME but __version__ is $version"
+            exit 1
+          fi
+      - name: Notes from CHANGELOG.md
+        run: |
+          awk -v v="${GITHUB_REF_NAME#v}" '
+            /^## \[/ { p = index($0, "## [" v "]") == 1; next }
+            /^\[[^]]+\]: / { p = 0 }
+            p' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no section for ${GITHUB_REF_NAME#v}"
+            exit 1
+          fi
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "cairn ${GITHUB_REF_NAME#v}" --notes-file notes.md
