@@ -45,7 +45,7 @@ turns the closed docs into a digest of what got done.
 A single node is a complete installation: sync is optional and can be added later.
 
 ```bash
-uv tool install git+https://github.com/PPeitsch/cairn    # or: pipx install git+…
+uv tool install git+https://github.com/PPeitsch/cairn@v0.5.0   # or: pipx install git+…
 cairn init                                  # config, data folder and node key
 cairn integrate claude-code                 # MCP server + the SessionStart hook for handoffs
 ```
@@ -154,13 +154,49 @@ does not load is not saved: `cairn` goes back to the previous one.
 ## Installation
 
 ```bash
-uv tool install git+https://github.com/PPeitsch/cairn    # or: pipx install git+…
+uv tool install git+https://github.com/PPeitsch/cairn@v0.5.0   # or: pipx install git+…
 cairn --version
 ```
 
-With `"cairn[serve] @ git+https://github.com/PPeitsch/cairn"` instead, `cairn serve` also renders
+Install from a release tag (the [changelog](CHANGELOG.md) lists them), not from `main`: the version
+a node reports is then the code it runs, and other nodes can tell. With
+`"cairn[serve] @ git+https://github.com/PPeitsch/cairn@v0.5.0"` instead, `cairn serve` also renders
 docs as markdown, highlights code and draws mermaid diagrams (it adds `markdown-it-py` and
 `pygments`); without it, it shows them as text.
+
+## Versions and compatibility
+
+cairn follows [Semantic Versioning](https://semver.org/); before 1.0 a breaking change bumps the
+minor version. Each release is a `vX.Y.Z` tag with a GitHub Release, and its notes come from the
+[changelog](CHANGELOG.md), which marks breaking changes and says when an upgrade needs a step by
+hand. Watching the repository's releases on GitHub is the way to hear of a new one; cairn does
+not check the network on its own.
+
+What can differ between nodes, and what happens when it does:
+
+| Layer | Number | When two nodes differ |
+|---|---|---|
+| Event log | `FORMAT_VERSION`, its operations and data vocabulary | The older node copies the events all the same and keeps them; what it does not understand stays out of its projection, reported by `check`, until it upgrades: the first open with a newer version rebuilds the projection. Newer code reads every older log, forever. |
+| Sync protocol | `PROTO` | Sync refuses (`incompatible protocol`). It changes only when there is no other way: new fields travel as optional extras. |
+| Projection | `SCHEMA_VERSION` | Local and disposable: rebuilt from the log. |
+| Interfaces | CLI flags, MCP parameters, config keys | Scripts, agents and configs break: a breaking change, with the steps in the changelog. |
+
+So nodes on different versions keep syncing as long as the protocol is the same, and nothing is
+lost on the way. Upgrade them all anyway: an older node does not show what a newer one writes
+with features it lacks. The sync greeting carries the version, and `cairn sync` names the node
+left behind (`[notice] vps runs cairn 0.4.9, this node 0.5.0: upgrade the older one`).
+
+To upgrade a node:
+
+1. `uv tool install --force "cairn[serve] @ git+https://github.com/PPeitsch/cairn@vX.Y.Z"`
+   (without `[serve]` if it was not there). The first command it runs rebuilds the projection.
+2. Restart the Claude Code sessions that are open: their MCP server is a running process with the
+   old code. The SessionStart hook and the systemd timer call the binary, so they pick up the new
+   version by themselves.
+3. Only if the changelog says so: `cairn integrate claude-code` or `cairn integrate systemd` again.
+
+The order between nodes does not matter, unless a release changes the sync protocol: then
+upgrade all of them in the same round.
 
 ## Usage
 
@@ -364,6 +400,19 @@ Tests run against an isolated node in a temp dir: `CAIRN_CONFIG_DIR`, `CAIRN_DAT
 `CAIRN_AUTHORIZED_KEYS` changes the `authorized_keys` file, `CAIRN_SSH` the ssh command (like
 `GIT_SSH`), `CAIRN_NO_AUTOSYNC` turns the triggers off and `CAIRN_SYSTEMD_DIR` changes where
 `integrate systemd` writes the units.
+
+Every pull request that changes `src/` adds a line under `[Unreleased]` in
+[CHANGELOG.md](CHANGELOG.md); CI fails without it, and the `no-changelog` label skips the check
+for changes nobody would notice. A release is a pull request of its own:
+
+1. `release: X.Y.Z`: the `[Unreleased]` entries move to `## [X.Y.Z] - <date>`, the compare links
+   at the bottom get the new version, and `__version__` in `src/cairn/__init__.py` becomes
+   `X.Y.Z` (a test checks both agree).
+2. Once it is merged and CI on `main` is green, tag that commit `vX.Y.Z` and push the tag. The
+   `release` workflow checks that the tag matches `__version__` and publishes the GitHub Release
+   with the changelog section as notes.
+
+Nodes are upgraded only from a tag: what has to reach another node is released first.
 
 ## License
 
