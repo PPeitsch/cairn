@@ -5,7 +5,9 @@ Tables:
 - `events`: every known event, with its `status` in the doc's chain (`applied`, `divergent` if
   it ended up on a branch that is not the main one, `resolved` if it belongs to a branch a
   `resolve` already settled, `orphan` if its `prev` has not arrived).
-- `docs`: the current state of each doc (front-matter in `meta`, body in `body`).
+- `docs`: the current state of each doc (front-matter in `meta`, body in `body`). A deleted doc
+  (`deleted:` in its state, see `delete`) is not here, nor in `links` or `docs_fts`: it keeps
+  only its `events` and `revisions`, from which `restore` brings it back.
 - `links`: the links between docs (`origin`, `references`, `plan`), by id.
 - `revisions`: the state after each event of the main chain (history, diff, show).
 - `docs_fts`: FTS5 index over name, title and body.
@@ -97,6 +99,10 @@ class DocState:
         if self.type == "ref":
             return "ref"
         return "done" if self.status in CLOSED_STATES else "wip"
+
+    @property
+    def deleted(self) -> bool:
+        return bool(self.meta.get("deleted"))
 
     @property
     def closed(self) -> str | None:
@@ -289,6 +295,8 @@ class Projection:
                  json.dumps(state.meta, ensure_ascii=False), state.body,
                  json.dumps(state.links, ensure_ascii=False)))
         assert state is not None
+        if state.deleted:
+            return
         db.execute(
             "INSERT INTO docs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (doc_id, state.name, state.type, str(state.meta.get("repo") or ""), state.status,
@@ -302,8 +310,27 @@ class Projection:
 
     # -- reading
     def head(self, doc_id: str) -> str | None:
+        """The last event of the main chain; a deleted doc has it too (its last revision)."""
         row = self.db.execute("SELECT head FROM docs WHERE id = ?", (doc_id,)).fetchone()
-        return row["head"] if row else None
+        if row:
+            return row["head"]
+        row = self.db.execute("SELECT event_id FROM revisions WHERE doc_id = ? ORDER BY seq DESC "
+                              "LIMIT 1", (doc_id,)).fetchone()
+        return row["event_id"] if row else None
+
+    def deleted(self) -> list[tuple[str, DocState, sqlite3.Row]]:
+        """The deleted docs: (id, state, last revision), the most recently deleted first."""
+        rows = self.db.execute(
+            "SELECT r.* FROM revisions r JOIN (SELECT doc_id, max(seq) AS seq FROM revisions "
+            "GROUP BY doc_id) m ON r.doc_id = m.doc_id AND r.seq = m.seq "
+            "WHERE r.doc_id NOT IN (SELECT id FROM docs) ORDER BY r.ts DESC").fetchall()
+        out = []
+        for r in rows:
+            state = DocState(name=r["name"], meta=json.loads(r["meta"]), body=r["body"],
+                             links=json.loads(r["links"]))
+            if state.deleted:
+                out.append((r["doc_id"], state, r))
+        return out
 
     def state(self, doc_id: str) -> DocState | None:
         row = self.db.execute("SELECT * FROM docs WHERE id = ?", (doc_id,)).fetchone()

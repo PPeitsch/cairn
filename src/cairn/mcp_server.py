@@ -68,6 +68,9 @@ Names
 - cairn builds them: `<YYYY-MM-DD>_<area>_<topic>` (bugs `_BUG_`, handoffs `_HANDOFF_`);
   references `<area>_<topic>`, without a date. `area` is the main system or repo; everything in
   snake_case. A doc is referred to by its name (with or without `.md`) or by a prefix of its id.
+- A doc is renamed with cairn_rename, which also fixes the mentions of it in the other docs.
+  One created by mistake or duplicated is deleted with cairn_delete only when the user asks
+  (cairn_restore undoes it); unfinished work is closed as discarded, not deleted.
 - The state lives in the front-matter (type, repo, status, date, closed, …) and the
   operations manage it: do not repeat it in the body. `repo:` comes from the conversation's
   directory; `cross-repo` for work that spans several.
@@ -81,6 +84,8 @@ Handoffs (notes for the next conversation)
 
 READ = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+# reversible (`restore`), but the doc leaves every listing: the client may ask before it
+DELETE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False)
 
 Scope = Literal["wip", "done", "ref", "all"]
 
@@ -328,6 +333,37 @@ def cairn_diff(doc: str, rev_a: str | None = None, rev_b: str | None = None) -> 
     return out or "No differences."
 
 
+def cairn_rename(doc: str, new_name: str) -> str:
+    """Renames a doc (`new_name`: the whole name, `YYYY-MM-DD_...` except references) and
+    replaces the old name in the text of every doc that mentions it. Links go by id and keep
+    working; the old name keeps finding the doc."""
+    with _open() as store:
+        r = docs.rename(store, doc, new_name)
+    out = f"Renamed: {r.extra['old']} → {r.doc.name}"
+    if r.extra["mentions"]:
+        out += f"\nMentions updated in: {', '.join(r.extra['mentions'])}"
+    return out
+
+
+def cairn_delete(doc: str, reason: str | None = None) -> str:
+    """Deletes a doc: it leaves list, search and show, and its name is free again. Only when the
+    user asks for it (a doc created by mistake, a duplicate); work left unfinished is closed with
+    cairn_close `discard` instead. It can be undone with cairn_restore."""
+    with _open() as store:
+        r = docs.delete(store, doc, reason)
+    return _with_warnings(f"Deleted: {r.doc.name} (cairn_restore brings it back)", r.warnings)
+
+
+def cairn_restore(doc: str | None = None) -> str:
+    """Brings back a deleted doc as it was. Without `doc`, lists the deleted ones."""
+    with _open() as store:
+        if doc is None:
+            gone = docs.deleted_docs(store)
+            return "\n".join(docs.deleted_line(d) for d in gone) if gone else "No deleted docs."
+        r = docs.restore(store, doc)
+    return f"Restored: {r.doc.name}"
+
+
 def cairn_handoff_new(area: str, topic: str, body: str | None = None, to: list[str] | None = None,
                       plan: list[str] | None = None, repo: str | None = None) -> str:
     """Leaves a note for the next conversation. `to`: the repos it is for (default: the
@@ -379,7 +415,8 @@ TOOLS = [
     (cairn_check, READ), (cairn_log, READ), (cairn_diff, READ), (cairn_handoff_list, READ),
     (cairn_new, WRITE), (cairn_edit, WRITE), (cairn_close, WRITE), (cairn_reopen, WRITE),
     (cairn_promote, WRITE), (cairn_link, WRITE), (cairn_handoff_new, WRITE), (cairn_handoff_take, WRITE),
-    (cairn_handoff_drop, WRITE),
+    (cairn_handoff_drop, WRITE), (cairn_rename, WRITE), (cairn_delete, DELETE),
+    (cairn_restore, WRITE),
 ]
 
 

@@ -87,6 +87,11 @@ discarded one keeps its reason (`close --discard "why"`), and editing a referenc
 `updated:` so a stale one shows its age. Work that spans several repos goes under
 `repo: cross-repo`, which is also what a doc created outside any repo gets.
 
+A doc can be renamed (`rename`): links go by id, and the mentions of the old name in the text of
+every doc are replaced. One created by mistake can be deleted (`delete`): it leaves every
+listing and its name is free again, but the log is append-only and synced, so its events stay
+and `restore` brings it back. Nothing is ever purged from the log.
+
 None of the text is hard-wired. `cairn defaults <folder>` exports the built-in templates (one per
 type) and the MCP instructions (when and how the agent should document); edit them — rewrite the
 sections, translate them — and point `[docs] templates` and `[mcp] instructions` at them. The
@@ -210,6 +215,9 @@ cairn close <doc> --discard "reason"        # unfinished: status `discarded`, re
 cairn reopen <doc> [reason]
 cairn promote <doc> <area> <topic> [--section S]...   # sections to a reference, linked
 cairn link <doc> <origin|references|plan> <other> [--remove]   # <doc> gets <other> under <kind>:
+cairn rename <doc> <new-name>               # also fixes the mentions in every doc; the old name still finds it
+cairn delete <doc> [reason]                 # out of every listing, its name free; undone by restore
+cairn restore [<doc>]                       # brings a deleted doc back; with no doc, lists them
 
 cairn list [wip|done|ref|all] [--by-repo]   # by repo: with counts and date of the last change
 cairn search <regex> [scope]                # or --fts <query> by relevance

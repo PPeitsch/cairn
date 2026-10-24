@@ -219,6 +219,90 @@ def test_link_remove_dangling(store, repo, capsys):
     assert "Not found" in run(capsys, "link", doc.name, "plan", "abababab", ok=False).err
 
 
+# ──────────────────────────────────────────────────────────────── rename / delete / restore
+
+def test_rename_updates_mentions_and_keeps_links(store, repo, capsys):
+    run(capsys, "new", "taller", "producto", "plan")
+    run(capsys, "new", "juego", "mesa", "plan")
+    run(capsys, "new", "taller", "producto_v2", "plan")
+    old, new, mesa, v2 = (f"{HOY}_taller_producto", f"{HOY}_zunft_producto", f"{HOY}_juego_mesa",
+                          f"{HOY}_taller_producto_v2")
+    run(capsys, "link", mesa, "plan", old)
+    fill(store, old, "## TL;DR", f"## TL;DR\n\nEste es `{old}`.")
+    fill(store, mesa, "## TL;DR", f"## TL;DR\n\nVer ../_wip/{old}.md y {old}@~1; no {v2} ni {old}.v2.")
+    edit.apply(store, mesa, set_={"note": f"Reemplazado por {old}"})
+
+    out = run(capsys, "rename", old, f"{new}.md").out
+    assert f"Renamed: {old} → {new}" in out and f"mentions updated in: {mesa}" in out
+    doc = docs.find(store, new)
+    assert f"Este es `{new}`." in doc.body
+    m = docs.find(store, mesa)
+    assert f"../_wip/{new}.md y {new}@~1; no {v2} ni {old}.v2." in m.body   # whole tokens only
+    assert m.meta["note"] == f"Reemplazado por {new}"
+    assert m.links == [["plan", doc.id]]
+    assert f"../_wip/{new}.md" in docs.render(store, m)
+    assert docs.find(store, old).id == doc.id                 # the old name still finds it
+    assert docs.find(store, v2).name == v2                    # untouched
+    ops = [r[0] for r in store.projection.db.execute(
+        "SELECT op FROM revisions WHERE doc_id = ? ORDER BY seq", (doc.id,))]
+    assert ops[-1] == "rename"
+    assert docs.check(store) == []
+
+
+def test_rename_refusals(store, repo, capsys):
+    run(capsys, "new", "api", "a", "plan")
+    run(capsys, "new", "api", "b", "plan")
+    run(capsys, "new", "api", "endpoints", "ref")
+    a, b = f"{HOY}_api_a", f"{HOY}_api_b"
+    assert "Already exists" in run(capsys, "rename", a, b, ok=False).err
+    assert "already called that" in run(capsys, "rename", a, a, ok=False).err
+    assert "YYYY-MM-DD_" in run(capsys, "rename", a, "api_a", ok=False).err
+    assert "Invalid name" in run(capsys, "rename", a, f"{HOY} api a", ok=False).err
+    run(capsys, "rename", "api_endpoints", "api_rutas")         # a reference goes without a date
+    assert docs.find(store, "api_rutas").scope == "ref"
+
+
+def test_delete_and_restore(store, repo, capsys):
+    run(capsys, "new", "api", "duplicado", "plan")
+    run(capsys, "new", "api", "plan", "plan")
+    dup, plan = f"{HOY}_api_duplicado", f"{HOY}_api_plan"
+    run(capsys, "link", plan, "origin", dup)
+    doc_id = docs.find(store, dup).id
+
+    r = run(capsys, "delete", dup, "creado por error")
+    assert f"Deleted: {dup}" in r.out and plan in r.err       # it warns about who links to it
+    assert "Not found" in run(capsys, "show", dup, ok=False).err
+    assert dup not in run(capsys, "list", "all").out
+    assert run(capsys, "search", "duplicado").out.count(dup) == 0
+    assert [p for p in docs.check(store) if "was deleted" in p and f"restore {dup}" in p]
+    assert f"{dup}  [plan · deleted" in run(capsys, "restore").out
+    assert "creado por error" in run(capsys, "restore").out
+
+    # its name is free; restoring needs it back
+    run(capsys, "new", "api", "duplicado", "plan")
+    assert "taken by another doc" in run(capsys, "restore", dup, ok=False).err
+    run(capsys, "rename", dup, f"{HOY}_api_duplicado_nuevo")
+    assert f"Restored: {dup}" in run(capsys, "restore", dup).out
+    doc = docs.find(store, dup)
+    assert doc.id == doc_id and "deleted" not in doc.meta and doc.scope == "wip"
+    assert docs.check(store) == []
+    assert "No deleted docs" in run(capsys, "restore").out
+    assert "No deleted doc is called" in run(capsys, "restore", dup, ok=False).err
+
+
+def test_delete_survives_rebuild_and_is_not_edited(store, repo, capsys):
+    run(capsys, "new", "api", "x", "plan")
+    name = f"{HOY}_api_x"
+    with pytest.raises(CairnError, match="not deleted .* by editing"):
+        edit.apply(store, name, set_={"deleted": HOY})
+    run(capsys, "delete", name)
+    store.rebuild()
+    assert [d.name for d in docs.deleted_docs(store)] == [name]
+    assert not docs.name_taken(store, name)
+    run(capsys, "restore", name)
+    assert docs.find(store, name).meta.get("deleted") is None
+
+
 # ──────────────────────────────────────────────────────────────── listings and search
 
 @pytest.fixture

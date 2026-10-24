@@ -7,7 +7,8 @@ just like in wip-doc, with two limits:
 - links (`origin`, `references`, `plan`) are not edited: `promote`, `handoff new` and `link`
   manage them, and in the file they are computed paths;
 - `status` cannot go from open to closed or back: that is `close` / `reopen` /
-  `handoff take|drop`, which change other fields at the same time.
+  `handoff take|drop`, which change other fields at the same time (and `deleted` is `delete` /
+  `restore`).
 
 A reference whose body changes gets `updated: <today>` on its own.
 
@@ -30,6 +31,7 @@ from cairn.projection import CLOSED_STATES, OPEN_STATES
 from cairn.store import CairnError, Store
 
 STATE_KEYS = {"status", "note"}
+DELETE_KEYS = {"deleted", "deleted_reason"}
 
 
 def _group(status: str) -> str:
@@ -56,6 +58,9 @@ def changes(doc: Doc, new_meta: dict | None, new_body: str | None) -> dict:
     if "type" in set_ and (set_["type"] == "ref") != (doc.type == "ref"):
         raise CairnError("A doc does not become a reference (or stop being one) by editing "
                          "its type: that is what `promote` is for.")
+    if DELETE_KEYS & (set(set_) | set(unset)):
+        raise CairnError("A doc is not deleted (or restored) by editing: that is what `delete` "
+                         "and `restore` are for.")
     if "status" in unset and doc.type != "ref":
         raise CairnError("`status` cannot be removed")
     if "status" in set_:

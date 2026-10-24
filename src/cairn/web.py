@@ -59,7 +59,8 @@ OP_LABEL = {
     "create": "created", "import": "imported", "handoff_new": "handoff created", "edit": "edited",
     "set_state": "state changed", "close": "closed", "reopen": "reopened", "promote": "promoted",
     "link": "linked", "unlink": "unlinked", "handoff_take": "handoff taken",
-    "handoff_drop": "handoff dropped", "resolve": "branches resolved",
+    "handoff_drop": "handoff dropped", "resolve": "branches resolved", "rename": "renamed",
+    "delete": "deleted", "restore": "restored",
 }
 
 # ──────────────────────────────────────────────────────────────── icons (own SVGs, theme colored)
