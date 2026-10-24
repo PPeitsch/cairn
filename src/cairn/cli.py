@@ -126,6 +126,34 @@ def cmd_link(args) -> int:
     return 0
 
 
+def cmd_rename(args) -> int:
+    with _open() as store:
+        r = docs.rename(store, args.doc, args.new_name)
+    print(f"Renamed: {r.extra['old']} → {r.doc.name}")
+    if r.extra["mentions"]:
+        print(f"  mentions updated in: {', '.join(r.extra['mentions'])}")
+    return 0
+
+
+def cmd_delete(args) -> int:
+    with _open() as store:
+        r = docs.delete(store, args.doc, args.reason)
+    print(f"Deleted: {r.doc.name} (`cairn restore {r.doc.name}` brings it back)")
+    _warn_all(r.warnings)
+    return 0
+
+
+def cmd_restore(args) -> int:
+    with _open() as store:
+        if args.doc is None:
+            gone = docs.deleted_docs(store)
+            print("\n".join(docs.deleted_line(d) for d in gone) if gone else "No deleted docs.")
+            return 0
+        r = docs.restore(store, args.doc)
+    print(f"Restored: {r.doc.name}")
+    return 0
+
+
 # ──────────────────────────────────────────────────────────────── queries
 
 def _print_scope(store: Store, scope: str, by_repo: bool = False) -> None:
@@ -669,6 +697,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("other")
     p.add_argument("--remove", action="store_true", help="removes the link instead")
     p.set_defaults(func=cmd_link)
+
+    p = sub.add_parser("rename", help="renames a doc and updates the mentions of it in every doc")
+    p.add_argument("doc")
+    p.add_argument("new_name", help="the whole new name (`YYYY-MM-DD_...`, except references)")
+    p.set_defaults(func=cmd_rename)
+
+    p = sub.add_parser("delete", help="deletes a doc (it can be brought back with `restore`)")
+    p.add_argument("doc")
+    p.add_argument("reason", nargs="?", help="why; `restore` shows it")
+    p.set_defaults(func=cmd_delete)
+
+    p = sub.add_parser("restore", help="brings back a deleted doc; with no doc, lists them")
+    p.add_argument("doc", nargs="?")
+    p.set_defaults(func=cmd_restore)
 
     p = sub.add_parser("list", help="lists the docs (default: the open ones)")
     p.add_argument("scope", nargs="?", default="wip", choices=["wip", "done", "ref", "all"])

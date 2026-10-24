@@ -11,6 +11,19 @@ then every build reported 0.0.1); their tags point at the merge that closed each
 
 ## [Unreleased]
 
+### Added
+- `cairn rename <doc> <new-name>` (and `cairn_rename`): a new name for a doc, with the mentions of
+  the old one replaced in the body and front-matter of every doc. Links go by id and keep
+  working, and the old name still finds the doc.
+- `cairn delete <doc> [reason]` (and `cairn_delete`, marked destructive): the doc leaves `list`,
+  `search`, `show`, the web view and the handoffs, and its name is free again. Its events stay
+  in the log, so `cairn restore <doc>` (and `cairn_restore`) brings it back; `cairn restore` with
+  no doc lists the deleted ones. `check` tells a link to a deleted doc apart from a broken one.
+
+### Upgrading
+- `rename`, `delete` and `restore` are new event operations: a node on an older version keeps
+  them out of its projection (and `check` reports them) until it is upgraded. Upgrade every node.
+
 ## [0.5.0] - 2026-10-22
 
 ### Added

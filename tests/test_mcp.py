@@ -43,6 +43,24 @@ def test_tools_and_instructions(node):
     assert "pattern" in tools["cairn_search"].input_schema["required"]
 
 
+def test_rename_delete_restore(node):
+    async def go():
+        async with Client(mcp_server.build_server()) as c:
+            return {t.name: t for t in (await c.list_tools()).tools}
+    tools = asyncio.run(go())
+    assert tools["cairn_delete"].annotations.destructive_hint is True
+    assert tools["cairn_rename"].annotations.destructive_hint is False
+
+    ok("cairn_new", {"area": "demo", "topic": "taller", "type": "plan"})
+    text = ok("cairn_rename", {"doc": "2026-03-10_demo_taller", "new_name": "2026-03-10_demo_zunft"})
+    assert "Renamed: 2026-03-10_demo_taller → 2026-03-10_demo_zunft" in text
+    assert "Deleted" in ok("cairn_delete", {"doc": "2026-03-10_demo_zunft", "reason": "duplicado"})
+    assert "duplicado" in ok("cairn_restore")
+    assert call("cairn_show", {"doc": "2026-03-10_demo_zunft"})[0]
+    assert "Restored" in ok("cairn_restore", {"doc": "2026-03-10_demo_zunft"})
+    assert "No deleted docs" in ok("cairn_restore")
+
+
 def test_lifecycle(node):
     text = ok("cairn_new", {"area": "demo", "topic": "lento", "type": "bug"})
     assert "Created: 2026-03-10_demo_BUG_lento" in text

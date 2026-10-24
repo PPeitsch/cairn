@@ -117,11 +117,17 @@ def normalize_ref(ref: str) -> str:
 
 
 def find(store: Store, ref: str) -> Doc:
-    """A doc by name (with or without `.md` and a leading folder) or by id prefix (6+ hex)."""
+    """A doc by name (with or without `.md` and a leading folder) or by id prefix (6+ hex). A
+    name no doc has now is looked up among the ones they had (`rename`): what still says the
+    old name (a commit, a script, another node's note) keeps finding it."""
     name = normalize_ref(ref)
-    rows = store.projection.db.execute("SELECT * FROM docs WHERE name = ?", (name,)).fetchall()
+    db = store.projection.db
+    rows = db.execute("SELECT * FROM docs WHERE name = ?", (name,)).fetchall()
     if not rows and re.fullmatch(r"[0-9a-f]{6,32}", name):
-        rows = store.projection.db.execute("SELECT * FROM docs WHERE id LIKE ?", (name + "%",)).fetchall()
+        rows = db.execute("SELECT * FROM docs WHERE id LIKE ?", (name + "%",)).fetchall()
+    if not rows:
+        rows = db.execute("SELECT * FROM docs WHERE id IN (SELECT doc_id FROM revisions "
+                          "WHERE name = ?)", (name,)).fetchall()
     if not rows:
         raise CairnError(f"Not found: {ref}")
     if len(rows) > 1:
@@ -400,6 +406,123 @@ def link(store: Store, ref: str, kind: str, other: str, remove: bool = False) ->
     return Result(get(store, doc.id), [], {"changed": True, "other": label})
 
 
+# ──────────────────────────────────────────────────────────────── rename / delete / restore
+
+def _mention_re(name: str) -> re.Pattern:
+    """The name as a whole token: not part of a longer name (`x_v2`, `x.v2`), but it may end in
+    `.md` or come after a folder (`../_done/x.md`)."""
+    return re.compile(rf"(?<![\w.-]){re.escape(name)}(?![\w-])(?!\.(?!md\b)\w)")
+
+
+def _replace_mentions(rx: re.Pattern, new: str, value):
+    """The value (a front-matter one or the body) with the mentions replaced, or None if it has
+    none."""
+    if isinstance(value, str):
+        out = rx.sub(new, value)
+        return out if out != value else None
+    if isinstance(value, list) and all(isinstance(x, str) for x in value):
+        out = [rx.sub(new, x) for x in value]
+        return out if out != value else None
+    return None
+
+
+def _mention_changes(doc: Doc, rx: re.Pattern, new: str) -> dict:
+    payload: dict = {}
+    body = _replace_mentions(rx, new, doc.body)
+    if body is not None:
+        payload["body"] = body
+    meta = {k: v for k, v in ((k, _replace_mentions(rx, new, v)) for k, v in doc.meta.items())
+            if v is not None}
+    if meta:
+        payload["set"] = meta
+    return payload
+
+
+def rename(store: Store, ref: str, new_name: str) -> Result:
+    """Changes a doc's name and, in every doc (this one included), the mentions of the old one:
+    links go by id and do not need it, but the text does (a `note:`, a path in the body). The old
+    name keeps finding the doc (`find`)."""
+    new_name = normalize_ref(new_name)
+    _check_name_parts(new_name)
+    with store.writer() as w:
+        doc = find(store, ref)
+        old = doc.name
+        if new_name == old:
+            raise CairnError(f"{old} is already called that.")
+        if name_taken(store, new_name):
+            raise CairnError(f"Already exists: {new_name}")
+        if doc.scope != "ref" and not re.match(r"^\d{4}-\d{2}-\d{2}_", new_name):
+            raise CairnError(f"{new_name} does not start with a YYYY-MM-DD_ date: only "
+                             "references go without one.")
+        rx = _mention_re(old)
+        w.emit("rename", doc.id, {"name": new_name, **_mention_changes(doc, rx, new_name)})
+        touched = []
+        for other in all_docs(store):
+            if other.id == doc.id:
+                continue
+            change = _mention_changes(other, rx, new_name)
+            if change:
+                w.emit("edit", other.id, change)
+                touched.append(other.name)
+    return Result(get(store, doc.id), [], {"old": old, "mentions": sorted(touched)})
+
+
+def delete(store: Store, ref: str, reason: str | None = None) -> Result:
+    """Deletes a doc: it leaves `list`, `search`, `show` and the web view, and its name is free
+    again. The log is append-only and synced, so its events stay (they cannot be purged: another
+    node would bring them back): `restore` undoes it. Returns the doc as it was."""
+    reason = (reason or "").strip()
+    warnings: list[str] = []
+    with store.writer() as w:
+        doc = find(store, ref)
+        incoming = sorted(r["name"] for r in store.projection.db.execute(
+            "SELECT DISTINCT d.name FROM links l JOIN docs d ON d.id = l.src WHERE l.dst = ?",
+            (doc.id,)))
+        change = {"deleted": clock.today()}
+        if reason:
+            change["deleted_reason"] = reason
+        w.emit("delete", doc.id, {"set": change})
+    if incoming:
+        warnings.append(f"[note] {len(incoming)} doc(s) still link to it: {', '.join(incoming)}. "
+                        "`check` reports them; `restore` or `link ... --remove` settles it.")
+    return Result(doc, warnings)
+
+
+def _deleted_doc(store: Store, doc_id: str, state, r) -> Doc:
+    return Doc(id=doc_id, name=state.name, meta=state.meta, body=state.body, scope="deleted",
+               head=r["event_id"], created="", last_event=r["ts"], divergent=False,
+               links=state.links)
+
+
+def deleted_docs(store: Store) -> list[Doc]:
+    """The deleted docs, the most recently deleted first."""
+    return [_deleted_doc(store, i, s, r) for i, s, r in store.projection.deleted()]
+
+
+def restore(store: Store, ref: str) -> Result:
+    """Brings a deleted doc back as it was. Its name has to be free: if another doc took it,
+    rename that one first."""
+    with store.writer() as w:
+        name = normalize_ref(ref)
+        found = [d for d in deleted_docs(store)
+                 if d.name == name or (re.fullmatch(r"[0-9a-f]{6,32}", name) and d.id.startswith(name))]
+        if not found:
+            raise CairnError(f"No deleted doc is called {ref} (`restore` with no name lists them).")
+        if len(found) > 1:
+            raise CairnError(f"{ref} is ambiguous: " + ", ".join(f"{d.name} ({d.id[:8]})" for d in found))
+        doc = found[0]
+        if name_taken(store, doc.name):
+            raise CairnError(f"{doc.name} is taken by another doc: rename that one first.")
+        w.emit("restore", doc.id, {"unset": ["deleted", "deleted_reason"]})
+    return Result(get(store, doc.id))
+
+
+def deleted_line(doc: Doc) -> str:
+    reason = doc.meta.get("deleted_reason")
+    return (f"{doc.name}  [{doc.type} · deleted {fmt_date(str(doc.meta.get('deleted', '')))} · "
+            f"{repo_label(doc)}]" + (f"  {reason}" if reason else ""))
+
+
 # ──────────────────────────────────────────────────────────────── search / weekly
 
 @dataclass
@@ -490,6 +613,7 @@ def check(store: Store) -> list[str]:
     for r in db.execute("SELECT name, count(*) n FROM docs GROUP BY name HAVING n > 1"):
         problems.append(f"{r['name']}: {r['n']} docs with the same name")
     ids = {r["id"] for r in db.execute("SELECT id FROM docs")}
+    deleted = {d.id: d.name for d in deleted_docs(store)}
     for doc in all_docs(store):
         n = doc.name
         if doc.divergent:
@@ -511,7 +635,11 @@ def check(store: Store) -> list[str]:
         elif doc.scope == "done" and not doc.meta.get("closed"):
             problems.append(f"{n} is closed without `closed:`: weekly falls back to the last change")
         for kind, dst in doc.links:
-            if dst not in ids:
+            if dst in deleted:
+                problems.append(f"{n}: the `{kind}` link points to {deleted[dst]}, which was deleted: "
+                                f"`cairn restore {deleted[dst]}` or `cairn link {n} {kind} "
+                                f"{dst[:8]} --remove`")
+            elif dst not in ids:
                 problems.append(f"{n}: the `{kind}` link points to a doc that does not exist ({dst[:8]})")
     return problems
 
