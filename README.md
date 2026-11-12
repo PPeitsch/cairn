@@ -45,7 +45,7 @@ turns the closed docs into a digest of what got done.
 A single node is a complete installation: sync is optional and can be added later.
 
 ```bash
-uv tool install git+https://github.com/PPeitsch/cairn@v0.5.0   # or: pipx install git+…
+uv tool install git+https://github.com/PPeitsch/cairn@v0.6.0   # or: pipx install git+…
 cairn init                                  # config, data folder and node key
 cairn integrate claude-code                 # MCP server + the SessionStart hook for handoffs
 ```
@@ -159,13 +159,13 @@ does not load is not saved: `cairn` goes back to the previous one.
 ## Installation
 
 ```bash
-uv tool install git+https://github.com/PPeitsch/cairn@v0.5.0   # or: pipx install git+…
+uv tool install git+https://github.com/PPeitsch/cairn@v0.6.0   # or: pipx install git+…
 cairn --version
 ```
 
 Install from a release tag (the [changelog](CHANGELOG.md) lists them), not from `main`: the version
 a node reports is then the code it runs, and other nodes can tell. With
-`"cairn[serve] @ git+https://github.com/PPeitsch/cairn@v0.5.0"` instead, `cairn serve` also renders
+`"cairn[serve] @ git+https://github.com/PPeitsch/cairn@v0.6.0"` instead, `cairn serve` also renders
 docs as markdown, highlights code and draws mermaid diagrams (it adds `markdown-it-py` and
 `pygments`); without it, it shows them as text.
 
